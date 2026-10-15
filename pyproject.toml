@@ -1,0 +1,26 @@
+[project]
+name = "audiopdf"
+version = "0.0.1"
+description = "PDF -> audiobook (Fase 0: CLI, texto selecionável, sem tradução)"
+requires-python = ">=3.12"
+dependencies = [
+  "pymupdf>=1.24",
+  "azure-cognitiveservices-speech>=1.38",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+audiopdf = "audiopdf.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
