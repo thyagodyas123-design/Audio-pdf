@@ -27,7 +27,7 @@ class FakeTTS:
     default_voice = "pf_dora"
     calls: ClassVar[list[str]] = []
 
-    def synthesize(self, text, voice, speed=1.0):
+    def synthesize(self, text, voice, speed=1.0, pause_s=0.25):
         FakeTTS.calls.append(voice)
         buf = io.BytesIO()
         tone = 0.3 * np.sin(2 * np.pi * 440 * np.arange(24000) / 24000)  # 1 s: o LAME falha em silêncio curtíssimo
@@ -47,7 +47,7 @@ def client():
     from audiopdf.web import app as web
 
     web._provider = lambda: FakeTTS()
-    web.get_translator = lambda: FakeTranslator()
+    web.get_translator = lambda *_: FakeTranslator()
     return TestClient(web.app)
 
 
@@ -124,7 +124,7 @@ def test_translation_path_uses_english_voice_and_caches(client):
     assert meta["chapters"][0]["status"] == "done" and meta["chapters"][0]["lang"] == "en-US"
     assert set(FakeTTS.calls) == {"af_heart"}
     from audiopdf.web import app as web
-    cached = web.DATA / "books" / book["id"] / "translated" / "en" / "01.json"
+    cached = web.DATA / "books" / book["id"] / "translated" / "argos-en" / "01.json"
     assert cached.exists() and "[pt->en]" in cached.read_text()
 
 
@@ -159,3 +159,24 @@ def test_delete_book_and_unknown_id(client):
 def test_download_without_ready_chapters_is_404(client):
     book = upload(client, make_pdf()).json()
     assert client.get(f"/api/books/{book['id']}/download").status_code == 404
+
+
+def test_translators_endpoint_and_missing_key_rejected(client, monkeypatch):
+    monkeypatch.delenv("DEEPL_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert client.get("/api/translators").json() == ["argos"]
+    book = upload(client, make_pdf()).json()
+    r = client.post(f"/api/books/{book['id']}/jobs",
+                    json={"chapters": [1], "voice": "af_heart", "target_language": "en-US", "translator": "deepl"})
+    assert r.status_code == 400 and "indisponível" in r.json()["detail"]
+
+
+def test_reanalyze_keeps_done_audio_and_blocks_while_busy(client):
+    book = upload(client, make_pdf()).json()
+    client.post(f"/api/books/{book['id']}/jobs", json={"chapters": [1], "voice": "pf_dora"})
+    wait_done(client, book["id"], {1})
+    r = client.post(f"/api/books/{book['id']}/reanalyze")
+    assert r.status_code == 200
+    chapters = r.json()["chapters"]
+    assert chapters[0]["status"] == "done" and chapters[1]["status"] == "idle"
+    assert client.get(f"/api/books/{book['id']}/audio/1").status_code == 200

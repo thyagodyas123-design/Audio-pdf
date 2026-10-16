@@ -18,13 +18,14 @@ class AzureTTS:
             speechsdk.SpeechSynthesisOutputFormat.Audio48Khz96KBitRateMonoMp3
         )
 
-    def synthesize(self, text: str, voice: str, speed: float = 1.0) -> bytes:
+    def synthesize(self, text: str, voice: str, speed: float = 1.0, pause_s: float = 0.25) -> bytes:
         lang = "-".join(voice.split("-")[:2])
         rate = f"{round((speed - 1) * 100):+d}%"
         ssml = (
             f'<speak version="1.0" xml:lang="{lang}" '
             f'xmlns="http://www.w3.org/2001/10/synthesis">'
-            f'<voice name="{voice}"><prosody rate="{rate}">{escape(text)}</prosody></voice>'
+            f'<voice name="{voice}"><prosody rate="{rate}">{escape(text)}</prosody>'
+            f'<break time="{int(pause_s * 1000)}ms"/></voice>'
             f"</speak>"
         )
         synth = speechsdk.SpeechSynthesizer(speech_config=self._cfg, audio_config=None)

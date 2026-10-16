@@ -21,11 +21,11 @@ from starlette.background import BackgroundTask
 
 from ..audio import concat_normalize, to_mp3
 from ..chapters import split_chapters
-from ..chunk import chunk_text
+from ..chunk import chunk_paragraphs
 from ..clean import clean_pages
 from ..extract import extract
 from ..lang import detect
-from ..translate import get_translator
+from ..translate import available_translators, get_translator
 from ..tts import get_provider
 
 DATA = Path(os.environ.get("AUDIOPDF_DATA", "data")).resolve()
@@ -115,20 +115,21 @@ def _gc_parts(d: Path) -> None:
             shutil.rmtree(parts, ignore_errors=True)
 
 
-def _chapter_text(d: Path, book_id: str, idx: int, texts: list, src: str | None, tgt: str) -> tuple[str, str]:
+def _chapter_text(d: Path, book_id: str, idx: int, texts: list, src: str | None, tgt: str,
+                  translator: str = "argos") -> tuple[str, str]:
     """Retorna (título, texto) no idioma de saída; traduz com cache em disco quando necessário."""
     meta = _load(book_id)
     title = next(c["title"] for c in meta["chapters"] if c["index"] == idx)
     if not src or src == tgt:
         return title, texts[idx - 1]
-    cache = d / "translated" / tgt
+    cache = d / "translated" / f"{translator}-{tgt}"
     cache.mkdir(parents=True, exist_ok=True)
     f = cache / f"{idx:02d}.json"
     if f.exists():
         data = json.loads(f.read_text())
         return data["title"], data["text"]
     _update_chapter(book_id, idx, status="translating", progress=0, parts=0, error=None)
-    tr = get_translator()
+    tr = get_translator(translator)
     new_title = tr.translate(title, src, tgt)
     def progress(p: float) -> None:
         if book_id in _cancel:
@@ -141,20 +142,19 @@ def _chapter_text(d: Path, book_id: str, idx: int, texts: list, src: str | None,
 
 
 def _synth_chapter(d: Path, book_id: str, idx: int, texts: list, tts, voice: str, speed: float,
-                   src: str | None, tgt: str) -> None:
-    title, body = _chapter_text(d, book_id, idx, texts, src, tgt)
+                   src: str | None, tgt: str, translator: str = "argos") -> None:
+    title, body = _chapter_text(d, book_id, idx, texts, src, tgt, translator)
     _update_chapter(book_id, idx, status="running", progress=0, parts=0, error=None)
-    chunks = chunk_text(f"{title}.\n\n{body}", tts.max_chars)
-    if chunks and len(chunks[0]) > 400:  # primeiro trecho curto: o player começa a tocar mais cedo
-        chunks = chunk_text(chunks[0], 350) + chunks[1:]
+    chunks = chunk_paragraphs(f"{title}.\n\n{body}", tts.max_chars)
     parts_dir = d / f"{idx:02d}.parts"
     shutil.rmtree(parts_dir, ignore_errors=True)
     parts_dir.mkdir()
     audio_parts = []
-    for i, ch in enumerate(chunks):
+    for i, (ch, para_end) in enumerate(chunks):
         if book_id in _cancel:
             raise InterruptedError
-        data = tts.synthesize(ch, voice, speed)
+        pause = 1.0 if i == 0 else (0.7 if para_end else 0.25)  # título > parágrafo > frase longa
+        data = tts.synthesize(ch, voice, speed, pause_s=pause)
         audio_parts.append(data)
         to_mp3(data, tts.audio_ext, parts_dir / f"{i:04d}.mp3")
         _update_chapter(book_id, idx, progress=round((i + 1) / len(chunks), 3), parts=i + 1)
@@ -170,7 +170,9 @@ def _worker() -> None:
             except HTTPException:
                 continue  # livro excluído enquanto estava na fila
             texts = json.loads((d / "chapters.json").read_text())
-            src = _load(book_id).get("language")
+            meta0 = _load(book_id)
+            src = meta0.get("language")
+            translator = (meta0.get("settings") or {}).get("translator") or "argos"
             tgt = _base(lang)
             tts = _provider()
             for idx in indices:
@@ -182,8 +184,9 @@ def _worker() -> None:
                     continue
                 _gc_parts(d)
                 try:
-                    _synth_chapter(d, book_id, idx, texts, tts, voice, speed, src, tgt)
-                    _update_chapter(book_id, idx, status="done", progress=1, voice=voice, speed=speed, lang=lang)
+                    _synth_chapter(d, book_id, idx, texts, tts, voice, speed, src, tgt, translator)
+                    _update_chapter(book_id, idx, status="done", progress=1, voice=voice, speed=speed, lang=lang,
+                                    translator=translator if src and src != tgt else None)
                 except InterruptedError:
                     _update_chapter(book_id, idx, status="canceled", progress=0)
                 except Exception as e:  # falha de um capítulo não derruba os demais
@@ -240,6 +243,11 @@ def _summary(meta: dict) -> dict:
     }
 
 
+@app.get("/api/translators")
+def translators():
+    return available_translators()
+
+
 @app.get("/api/languages")
 def languages():
     return LANGUAGES
@@ -274,6 +282,23 @@ def list_books():
     return sorted(books, key=lambda b: b["created"], reverse=True)
 
 
+def _analyze(pdf: Path, title: str):
+    try:
+        content = extract(str(pdf))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(400, "não foi possível ler o PDF") from e
+    chapters = split_chapters(clean_pages(content.pages), content.outline, title=title)
+    if not chapters:
+        raise HTTPException(422, "nenhum texto encontrado (PDF escaneado sem Tesseract instalado?)")
+    return content, chapters
+
+
+def _chapter_meta(c) -> dict:
+    return {"index": c.index, "title": c.title, "chars": len(c.text), "status": "idle", "progress": 0, "error": None}
+
+
 @app.post("/api/books")
 def upload(file: UploadFile = File(...)):  # noqa: B008
     book_id = uuid.uuid4().hex
@@ -291,32 +316,46 @@ def upload(file: UploadFile = File(...)):  # noqa: B008
         with pdf.open("rb") as f:
             if f.read(5) != b"%PDF-":
                 raise HTTPException(400, "o arquivo não é um PDF")
-        try:
-            content = extract(str(pdf))
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        except Exception:
-            raise HTTPException(400, "não foi possível ler o PDF")
         title = Path(file.filename or "livro").stem
-        chapters = split_chapters(clean_pages(content.pages), content.outline, title=title)
-        if not chapters:
-            raise HTTPException(422, "nenhum texto encontrado (PDF escaneado? OCR ainda não suportado)")
+        content, chapters = _analyze(pdf, title)
         (d / "chapters.json").write_text(json.dumps([c.text for c in chapters], ensure_ascii=False))
-        language = detect(" ".join(c.text[:2000] for c in chapters[:6]))
         meta = {
-            "id": book_id, "title": title, "pages": len(content.pages), "language": language,
-            "scanned_pages": len(content.scanned_pages), "created": time.time(),
-            "chapters": [
-                {"index": c.index, "title": c.title, "chars": len(c.text),
-                 "status": "idle", "progress": 0, "error": None}
-                for c in chapters
-            ],
+            "id": book_id, "title": title, "pages": len(content.pages),
+            "language": detect(" ".join(c.text[:2000] for c in chapters[:6])),
+            "scanned_pages": len(content.scanned_pages), "ocr_pages": len(content.ocr_pages),
+            "created": time.time(), "chapters": [_chapter_meta(c) for c in chapters],
         }
         _save(book_id, meta)
         return meta
     except Exception:
         shutil.rmtree(d, ignore_errors=True)
         raise
+
+
+@app.post("/api/books/{book_id}/reanalyze")
+def reanalyze(book_id: str):
+    """Refaz a extração do texto a partir do PDF original (ex.: após melhorias na limpeza).
+    Capítulos já prontos mantêm o áudio; os demais passam a usar o texto novo."""
+    d = _dir(book_id)
+    with _lock:
+        meta = _load(book_id)
+        if any(c["status"] in ("running", "queued", "translating") for c in meta["chapters"]):
+            raise HTTPException(409, "há conversão em andamento; cancele antes de reanalisar")
+        content, chapters = _analyze(d / "source.pdf", meta["title"])
+        old = {c["index"]: c for c in meta["chapters"]}
+        new = []
+        for c in chapters:
+            m = _chapter_meta(c)
+            o = old.get(c.index)
+            if o and o["title"] == c.title and o["status"] == "done":
+                m.update({k: o[k] for k in ("status", "progress", "voice", "speed", "lang", "parts", "translator") if k in o})
+            new.append(m)
+        (d / "chapters.json").write_text(json.dumps([c.text for c in chapters], ensure_ascii=False))
+        shutil.rmtree(d / "translated", ignore_errors=True)  # o texto mudou: traduções antigas não valem
+        meta.update(chapters=new, pages=len(content.pages), scanned_pages=len(content.scanned_pages),
+                    ocr_pages=len(content.ocr_pages), language=detect(" ".join(c.text[:2000] for c in chapters[:6])))
+        _save(book_id, meta)
+        return meta
 
 
 @app.get("/api/books/{book_id}")
@@ -329,6 +368,7 @@ class JobIn(BaseModel):
     voice: str
     speed: float = Field(1.0, ge=0.75, le=1.5)
     target_language: str | None = None  # ex.: pt-BR; padrão = idioma detectado
+    translator: str | None = None  # argos | deepl | claude (precisa de chave)
 
 
 @app.post("/api/books/{book_id}/jobs")
@@ -346,6 +386,9 @@ def start_job(book_id: str, job: JobIn):
         src = meta.get("language")
         if src and src != _base(lang) and src not in {l["base"] for l in LANGUAGES}:
             raise HTTPException(400, f"tradução a partir de '{src}' ainda não suportada")
+        translator = job.translator or "argos"
+        if translator not in available_translators():
+            raise HTTPException(400, f"tradutor '{translator}' indisponível (chave de API ausente?)")
         d = _dir(book_id)
         valid = {c["index"] for c in meta["chapters"]}
         picked = sorted(set(job.chapters) & valid)
@@ -355,13 +398,16 @@ def start_job(book_id: str, job: JobIn):
         for c in meta["chapters"]:
             if c["index"] not in picked:
                 continue
-            if c["status"] == "done" and (c.get("lang"), c.get("voice")) != (lang, job.voice):
+            translated = bool(src) and src != _base(lang)
+            same = (c.get("lang"), c.get("voice")) == (lang, job.voice) and \
+                (not translated or c.get("translator") == translator)
+            if c["status"] == "done" and not same:
                 (d / f"{c['index']:02d}.mp3").unlink(missing_ok=True)  # outra voz/idioma: refazer
                 shutil.rmtree(d / f"{c['index']:02d}.parts", ignore_errors=True)
                 c["status"] = "idle"
             if c["status"] != "done":
                 c.update(status="queued", progress=0, error=None)
-        meta["settings"] = {"voice": job.voice, "speed": job.speed, "lang": lang}
+        meta["settings"] = {"voice": job.voice, "speed": job.speed, "lang": lang, "translator": translator}
         _save(book_id, meta)
     _jobs.put((1, next(_seq), book_id, picked, job.voice, job.speed, lang))
     return {"queued": picked}

@@ -6,6 +6,6 @@ class TTSProvider(Protocol):
     audio_ext: str
     default_voice: str
 
-    def synthesize(self, text: str, voice: str, speed: float = 1.0) -> bytes:
+    def synthesize(self, text: str, voice: str, speed: float = 1.0, pause_s: float = 0.25) -> bytes:
         """Retorna áudio nos bytes de `audio_ext` (mp3 ou wav)."""
         ...

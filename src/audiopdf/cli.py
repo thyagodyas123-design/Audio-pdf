@@ -26,12 +26,15 @@ def main() -> None:
     ap.add_argument("--keep-matter", action="store_true", help="não pular copyright/sumário/índice")
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--out", default="out")
+    ap.add_argument("--no-ocr", action="store_true", help="não fazer OCR das páginas sem texto")
     ap.add_argument("--dry-run", action="store_true", help="só extrai/limpa e mostra estimativa")
     args = ap.parse_args()
 
-    content = extract(args.pdf)
+    content = extract(args.pdf, ocr=not args.no_ocr)
+    if content.ocr_pages:
+        print(f"OCR aplicado em {len(content.ocr_pages)} página(s)")
     if content.scanned_pages:
-        print(f"aviso: {len(content.scanned_pages)} página(s) sem texto (OCR não suportado na Fase 0)")
+        print(f"aviso: {len(content.scanned_pages)} página(s) sem texto legível")
     pages = clean_pages(content.pages)
     chapters = split_chapters(pages, content.outline, title=Path(args.pdf).stem,
                               skip_matter=not args.keep_matter)

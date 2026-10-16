@@ -11,13 +11,14 @@ dependencies = [
 
 [project.optional-dependencies]
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9"]
-translate = ["argostranslate>=1.9", "lingua-language-detector>=2.0"]
+translate = ["argostranslate>=1.9", "lingua-language-detector>=2.0", "httpx>=0.27", "anthropic>=0.40"]
 kokoro = ["kokoro>=0.9", "soundfile>=0.12"]  # exige: brew install espeak-ng
 dev = ["pytest>=8", "ruff>=0.5"]
 
 [project.scripts]
 audiopdf = "audiopdf.cli:main"
 audiopdf-web = "audiopdf.web.app:main"
+audiopdf-compare = "audiopdf.translate.compare:main"
 
 [build-system]
 requires = ["setuptools>=68"]

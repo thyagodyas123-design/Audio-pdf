@@ -9,12 +9,15 @@ Documentação: [`docs/requisitos.md`](docs/requisitos.md) · decisões pendente
 - App local (FastAPI + página única): upload, capítulos, idioma de saída, voz, fila, player que toca
   enquanto converte, pré-busca do próximo capítulo e download (ZIP ou por capítulo).
 - TTS local **Kokoro** (GPU Apple/MPS se disponível); tradução local **Argos** (pt ↔ en). Azure TTS como adapter opcional.
-- Ainda não: OCR, EPUB/DOCX, contas/login, banco e fila externos (Fase 1).
+- OCR (Tesseract) das páginas sem texto; pausas por parágrafo na narração.
+- Tradutores: Argos (local), DeepL e Claude (precisam de `DEEPL_API_KEY` / `ANTHROPIC_API_KEY`).
+- Ainda não: EPUB/DOCX, contas/login, banco e fila externos (Fase 1).
 
 ## Instalação
 
 ```bash
-brew install ffmpeg espeak-ng
+brew install ffmpeg espeak-ng tesseract
+# OCR em português: baixe por.traineddata (tessdata_fast) para a pasta do tessdata
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e ".[dev,web,kokoro,translate]"
 cp .env.example .env     # só necessário para o Azure TTS
@@ -29,6 +32,7 @@ cp .env.example .env     # só necessário para o Azure TTS
 # CLI
 .venv/bin/audiopdf livro.pdf --dry-run                              # estimativa, sem gastar TTS
 .venv/bin/audiopdf livro.pdf --provider kokoro --chapters 3-5       # gera out/NN-capitulo.mp3
+.venv/bin/audiopdf-compare livro.pdf --chapter 8 --to en            # compara tradutores (out/compare-*.md)
 .venv/bin/pytest
 ```
 
@@ -51,8 +55,9 @@ src/audiopdf/
 ```
 
 ## Limitações conhecidas
-- Figuras e pseudocódigo que são imagens no PDF não são narrados (sem OCR).
-- Argos erra terminologia técnica; o adapter permite trocar por DeepL/Claude.
+- Figuras e pseudocódigo que são imagens dentro de páginas com texto não são narrados (o OCR só cobre páginas inteiras sem texto).
+- OCR roda no upload, de forma síncrona (até `OCR_MAX_PAGES`, padrão 150); sem medição de confiança.
+- Argos erra terminologia técnica (ex.: "merge sort" vira "ordenação por intercalação" → "sorting by intercalation"); prefira DeepL ou Claude para livros técnicos.
 - Só pt-BR e en-US (vozes disponíveis).
 
 ## Roadmap

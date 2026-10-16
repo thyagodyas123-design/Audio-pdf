@@ -178,7 +178,8 @@ async function viewNew() {
 }
 
 async function viewConfigure(meta) {
-  const [allVoices, langs] = await Promise.all([api('/api/voices'), api('/api/languages')]);
+  const [allVoices, langs, translators] = await Promise.all([api('/api/voices'), api('/api/languages'), api('/api/translators')]);
+  let translator = translators[0];
   const srcLang = langs.find((l) => l.base === meta.language);
   let target = (srcLang || langs[0]).code;
   const voicesFor = (code) => allVoices.filter((v) => v.lang === code);
@@ -197,7 +198,7 @@ async function viewConfigure(meta) {
     go.disabled = true;
     try {
       await api(`/api/books/${meta.id}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chapters: [...picked], voice, speed, target_language: target }) });
+        body: JSON.stringify({ chapters: [...picked], voice, speed, target_language: target, translator }) });
       location.hash = `#/book/${meta.id}`;
     } catch (e) { alert(e.message); go.disabled = false; }
   } }, 'Iniciar conversão');
@@ -229,14 +230,21 @@ async function viewConfigure(meta) {
       sampleAudio);
     const from = srcLang ? srcLang.name : (meta.language || 'idioma não identificado');
     const to = langs.find((l) => l.code === target).name;
-    langNote.textContent = srcLang && srcLang.code === target
+    const translating = !(srcLang && srcLang.code === target);
+    trBox.hidden = !translating || translators.length < 2;
+    langNote.textContent = !translating
       ? `Idioma do livro: ${from}. Sem tradução.`
-      : `Idioma do livro: ${from}. Será traduzido para ${to} (tradução local, Argos) antes de narrar.`;
+      : `Idioma do livro: ${from}. Será traduzido para ${to} antes de narrar.`;
   }
   const langSelect = h('select', { id: 'lang', name: 'lang', onchange: (e) => { target = e.target.value; renderVoices(); } },
     langs.map((l) => h('option', { value: l.code, selected: l.code === target }, l.name)));
+  const trLabels = { argos: 'Argos (local, gratuito)', deepl: 'DeepL (API)', claude: 'Claude (API)' };
+  const trSelect = h('select', { id: 'translator', name: 'translator', onchange: (e) => (translator = e.target.value) },
+    translators.map((t) => h('option', { value: t }, trLabels[t] || t)));
+  const trBox = h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
+    h('label', { for: 'translator', style: 'font-weight:500' }, 'Tradutor'), trSelect);
   const langBox = h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
-    h('label', { for: 'lang', style: 'font-weight:500' }, 'Idioma de saída'), langSelect, langNote);
+    h('label', { for: 'lang', style: 'font-weight:500' }, 'Idioma de saída'), langSelect, langNote, trBox);
   renderVoices();
   const speedLbl = h('span', { style: 'color:var(--accent);font-weight:600' }, '1,0x');
   const speedIn = h('input', { type: 'range', min: 0.75, max: 1.5, step: 0.05, value: 1, id: 'speed', oninput: (e) => {
@@ -244,8 +252,10 @@ async function viewConfigure(meta) {
   } });
 
   const warn = [];
+  if (meta.ocr_pages) warn.push(h('div', { class: 'msg', style: 'background:var(--accent-soft);color:var(--ink)' },
+    `${meta.ocr_pages} página(s) escaneadas foram reconhecidas por OCR. Revise o texto: pode haver erros de leitura.`));
   if (meta.scanned_pages) warn.push(h('div', { class: 'msg', style: 'background:var(--warn-soft);color:var(--ink)' },
-    `${meta.scanned_pages} página(s) sem texto (escaneadas) foram ignoradas: OCR ainda não é suportado.`));
+    `${meta.scanned_pages} página(s) sem texto legível foram ignoradas.`));
   $app.replaceChildren(
     h('div', {}, h('h1', {}, meta.title), h('p', { class: 'sub' }, `${meta.pages} páginas · ${meta.chapters.length} capítulos detectados`)),
     ...warn,
@@ -331,6 +341,10 @@ async function viewBook(id) {
       done ? h('a', { class: 'btn primary', href: `/api/books/${id}/download`, download: '' }, `Baixar prontos (${done}) .zip`)
            : h('span', { class: 'btn', 'aria-disabled': 'true', style: 'opacity:.5' }, 'Baixar prontos (0)'),
       h('a', { class: 'btn', href: '#/' }, '← Biblioteca'),
+      ...(busy ? [] : [h('button', { class: 'btn', title: 'Refaz a extração do texto a partir do PDF original', onclick: async () => {
+        if (!confirm('Reanalisar o texto? Capítulos prontos mantêm o áudio; os demais usarão o texto novo.')) return;
+        try { await api(`/api/books/${id}/reanalyze`, { method: 'POST' }); refresh(); } catch (e) { alert(e.message); }
+      } }, 'Reanalisar texto')]),
       h('button', { class: 'btn danger', onclick: async () => {
         if (confirm('Excluir este livro e todos os áudios?')) { await api(`/api/books/${id}`, { method: 'DELETE' }); location.hash = '#/'; }
       } }, 'Excluir'));
