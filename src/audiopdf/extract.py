@@ -22,7 +22,11 @@ def extract(path: str, min_chars: int = 20) -> PdfContent:
     doc = pymupdf.open(path)
     if doc.needs_pass:
         raise ValueError("PDF protegido por senha")
-    pages = [p.get_text("text") for p in doc]
+    # blocos (não linhas soltas): preserva a separação entre parágrafos
+    pages = [
+        "\n\n".join(b[4].strip() for b in p.get_text("blocks", sort=True) if b[6] == 0 and b[4].strip())
+        for p in doc
+    ]
     outline = [Outline(lvl, title, max(pg - 1, 0)) for lvl, title, pg in doc.get_toc()]
     scanned = [i for i, t in enumerate(pages) if len(t.strip()) < min_chars]
     return PdfContent(pages=pages, outline=outline, scanned_pages=scanned)

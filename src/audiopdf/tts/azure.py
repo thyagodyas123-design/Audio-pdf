@@ -6,6 +6,8 @@ import azure.cognitiveservices.speech as speechsdk
 
 class AzureTTS:
     max_chars = 3000  # folga sob o limite de ~10 min de áudio por requisição
+    audio_ext = "mp3"
+    default_voice = "pt-BR-FranciscaNeural"
 
     def __init__(self) -> None:
         self._cfg = speechsdk.SpeechConfig(
