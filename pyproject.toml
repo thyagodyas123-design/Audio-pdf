@@ -10,10 +10,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9"]
+translate = ["argostranslate>=1.9", "lingua-language-detector>=2.0"]
+kokoro = ["kokoro>=0.9", "soundfile>=0.12"]  # exige: brew install espeak-ng
 dev = ["pytest>=8", "ruff>=0.5"]
 
 [project.scripts]
 audiopdf = "audiopdf.cli:main"
+audiopdf-web = "audiopdf.web.app:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -24,3 +28,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+"audiopdf.web" = ["static/*"]

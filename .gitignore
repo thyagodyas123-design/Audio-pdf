@@ -10,3 +10,6 @@ out/
 *.pdf
 .DS_Store
 .omc/
+data/
+.design/
+out/

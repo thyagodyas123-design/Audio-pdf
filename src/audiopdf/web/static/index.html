@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio-PDF</title>
+<link rel="icon" href="data:,">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:light dark;--bg:#F4F4F0;--surface:#fff;--ink:#15171A;--muted:#5B616B;--line:#DAD9D2;--accent:#0B5F5A;--accent-soft:#DDEFEC;--blue:#1F3A5F;--blue-soft:#E9EDF5;--err:#A32D2D;--err-soft:#F9E0E0;--warn-soft:#FBEBD0}
+@media (prefers-color-scheme:dark){:root{--bg:#121416;--surface:#1B1E22;--ink:#EDEDE8;--muted:#A3A8B0;--line:#33383F;--accent:#5CC4BC;--accent-soft:#1E3533;--blue:#8FB2E8;--blue-soft:#222B3A;--err:#F28B8B;--err-soft:#3A2222;--warn-soft:#3A2F1B}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'DM Sans',system-ui,sans-serif;font-size:16px;line-height:1.45}
+a{color:inherit;text-decoration:none}
+button,input,select{font:inherit;color:inherit}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 32px;padding:18px 32px;background:var(--surface);border-bottom:1px solid var(--line)}
+.logo{font-family:'Fraunces',serif;font-size:24px;font-weight:600}
+nav{display:flex;gap:24px;font-weight:500}
+nav a[aria-current=page]{color:var(--accent)}
+main{max-width:1180px;margin:0 auto;padding:36px 32px 64px;display:flex;flex-direction:column;gap:28px}
+h1{margin:0;font-family:'Fraunces',serif;font-weight:500;font-size:38px;letter-spacing:-.02em}
+h2{margin:0;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+p.sub{margin:6px 0 0;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:16px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 20px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:600;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+@media (prefers-color-scheme:dark){.btn.primary{color:#0B1514}}
+.btn.danger{color:var(--err);border-color:var(--err)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:24px}
+.cover{display:flex;flex-direction:column;justify-content:space-between;aspect-ratio:2/3;padding:20px;border-radius:6px;color:#F4F4F0;box-shadow:0 1px 2px rgba(0,0,0,.12),0 8px 20px rgba(0,0,0,.12)}
+.cover b{font-family:'Fraunces',serif;font-size:24px;line-height:1.15;font-weight:500;overflow:hidden;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical}
+.cover small{opacity:.8}
+.chip{display:inline-block;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+.chip.run{background:var(--blue-soft);color:var(--blue)}
+.chip.fail{background:var(--err-soft);color:var(--err)}
+.chip.idle{background:var(--line);color:var(--muted)}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent)}
+.drop{border:2px dashed var(--line);border-radius:14px;padding:48px 24px;text-align:center;color:var(--muted);background:var(--surface)}
+.drop.over{border-color:var(--accent);color:var(--accent)}
+.cols{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.cols>*{flex:1 1 380px;min-width:0}
+.row{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px solid var(--line);min-height:48px}
+.row:last-child{border-bottom:0}
+.row .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.row .m{color:var(--muted);font-size:13px;white-space:nowrap}
+.list{max-height:520px;overflow:auto}
+input[type=checkbox],input[type=radio]{width:20px;height:20px;accent-color:var(--accent)}
+input[type=range]{width:100%;accent-color:var(--accent);min-height:44px}
+select{min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.msg{padding:12px 16px;border-radius:10px;background:var(--err-soft);color:var(--err)}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.stats b{display:block;font-family:'Fraunces',serif;font-size:26px;font-weight:500}
+.stats span{color:var(--muted);font-size:13px}
+.player{display:flex;flex-direction:column;gap:16px}
+.ctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.round{width:52px;height:52px;border-radius:50%;border:1px solid var(--line);background:var(--surface);font-weight:600;cursor:pointer}
+.round.big{width:72px;height:72px;background:var(--accent);border-color:var(--accent);color:#fff}
+@media (prefers-color-scheme:dark){.round.big{color:#0B1514}}
+audio{width:100%}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+@media (max-width:640px){header,main{padding-left:16px;padding-right:16px}h1{font-size:30px}}
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="#/">Audio-PDF</a>
+  <nav><a href="#/" id="nav-lib">Biblioteca</a><a href="#/new" id="nav-new">Novo audiobook</a></nav>
+</header>
+<main id="app" aria-live="polite"></main>
+
+<script>
+const $app = document.getElementById('app');
+const COLORS = ['#1F3A5F', '#7A2E3B', '#3B4A2F', '#2B2B2B', '#4A3B6B', '#2F5D62'];
+const CHARS_PER_SEC = 17; // medido com Kokoro em CPU: ~17 caracteres de texto por segundo de áudio
+let timer = null;
+
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, '');
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) el.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return el;
+}
+const api = async (url, opts) => {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let d = r.statusText;
+    try { d = (await r.json()).detail || d; } catch {}
+    throw new Error(d);
+  }
+  return r.json();
+};
+const fmtDur = (s) => { const m = Math.round(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`; };
+const fmtTime = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const colorFor = (id) => COLORS[parseInt(id.slice(0, 4), 16) % COLORS.length];
+const statusChip = (s) => ({
+  done: h('span', { class: 'chip' }, 'Pronto'),
+  running: h('span', { class: 'chip run' }, 'Narrando'),
+  queued: h('span', { class: 'chip run' }, 'Na fila'),
+  translating: h('span', { class: 'chip run' }, 'Traduzindo'),
+  failed: h('span', { class: 'chip fail' }, 'Falhou'),
+  canceled: h('span', { class: 'chip idle' }, 'Cancelado'),
+  idle: h('span', { class: 'chip idle' }, 'Não convertido'),
+}[s] || h('span', { class: 'chip idle' }, s));
+
+function setNav(which) {
+  document.getElementById('nav-lib').toggleAttribute('aria-current', which === 'lib');
+  document.getElementById('nav-new').toggleAttribute('aria-current', which === 'new');
+  if (which === 'lib') document.getElementById('nav-lib').setAttribute('aria-current', 'page');
+  if (which === 'new') document.getElementById('nav-new').setAttribute('aria-current', 'page');
+}
+
+// ---------- Biblioteca ----------
+async function viewLibrary() {
+  setNav('lib');
+  $app.replaceChildren(h('p', { class: 'sub' }, 'Carregando…'));
+  const books = await api('/api/books');
+  const head = h('div', { class: 'ctl', style: 'justify-content:space-between' },
+    h('div', {}, h('h1', {}, 'Sua biblioteca'), h('p', { class: 'sub' }, `${books.length} livro(s)`)),
+    h('a', { class: 'btn primary', href: '#/new' }, 'Novo audiobook'));
+  if (!books.length) {
+    $app.replaceChildren(head, h('div', { class: 'drop' }, 'Nenhum livro ainda. Envie um PDF em "Novo audiobook".'));
+    return;
+  }
+  const grid = h('div', { class: 'grid' }, books.map((b) => {
+    const pct = b.chapter_count ? Math.round((b.done / b.chapter_count) * 100) : 0;
+    const chip = b.failed ? h('span', { class: 'chip fail' }, `${b.failed} falha(s)`)
+      : b.running ? h('span', { class: 'chip run' }, 'Convertendo')
+      : b.done === b.chapter_count && b.done ? h('span', { class: 'chip' }, 'Pronto')
+      : h('span', { class: 'chip idle' }, `${b.done}/${b.chapter_count} capítulos`);
+    return h('a', { href: `#/book/${b.id}`, style: 'display:flex;flex-direction:column;gap:10px' },
+      h('div', { class: 'cover', style: `background:${colorFor(b.id)}` },
+        h('small', {}, `${b.pages} páginas`), h('b', {}, b.title), h('small', {}, `${b.chapter_count} capítulos`)),
+      h('div', { class: 'bar', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': 'Capítulos prontos' }, h('i', { style: `width:${pct}%` })),
+      chip);
+  }));
+  $app.replaceChildren(head, grid);
+}
+
+// ---------- Novo audiobook ----------
+async function viewNew() {
+  setNav('new');
+  const err = h('div', { class: 'msg', hidden: true, role: 'alert' });
+  const showErr = (m) => { err.textContent = m; err.hidden = !m; };
+  const input = h('input', { type: 'file', accept: 'application/pdf', id: 'pdf', hidden: true });
+  const drop = h('label', { class: 'drop', for: 'pdf' }, h('b', {}, 'Arraste o PDF aqui'), ' ou clique para escolher (até 200 MB)');
+  const wrap = h('div', { class: 'card' },
+    h('h2', {}, '1 · Arquivo'), drop, input,
+    h('label', { style: 'display:flex;gap:10px;font-size:14px;color:var(--muted)' },
+      h('input', { type: 'checkbox', id: 'rights' }),
+      'Confirmo que tenho direito sobre este conteúdo e que o áudio é para uso pessoal.'));
+  $app.replaceChildren(h('div', {}, h('h1', {}, 'Novo audiobook'), h('p', { class: 'sub' }, 'Envie o PDF, escolha as vozes e converta por capítulo.')), err, wrap);
+
+  async function send(file) {
+    showErr('');
+    if (!document.getElementById('rights').checked) return showErr('Confirme que você tem direito sobre o conteúdo.');
+    if (!file) return;
+    drop.textContent = `Analisando ${file.name}…`;
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const meta = await api('/api/books', { method: 'POST', body: fd });
+      await viewConfigure(meta);
+    } catch (e) {
+      showErr(e.message);
+      drop.replaceChildren(h('b', {}, 'Arraste o PDF aqui'), ' ou clique para escolher (até 200 MB)');
+    }
+  }
+  input.addEventListener('change', () => send(input.files[0]));
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); send(e.dataTransfer.files[0]); });
+}
+
+async function viewConfigure(meta) {
+  const [allVoices, langs] = await Promise.all([api('/api/voices'), api('/api/languages')]);
+  const srcLang = langs.find((l) => l.base === meta.language);
+  let target = (srcLang || langs[0]).code;
+  const voicesFor = (code) => allVoices.filter((v) => v.lang === code);
+  const picked = new Set(meta.chapters.map((c) => c.index));
+  let voice = voicesFor(target)[0].id, speed = 1;
+  const est = h('div', { class: 'stats' });
+  const updateEst = () => {
+    const chars = meta.chapters.filter((c) => picked.has(c.index)).reduce((a, c) => a + c.chars, 0);
+    est.replaceChildren(
+      h('div', {}, h('b', {}, fmtDur(chars / CHARS_PER_SEC / speed)), h('span', {}, 'duração do áudio')),
+      h('div', {}, h('b', {}, chars.toLocaleString('pt-BR')), h('span', {}, 'caracteres')),
+      h('div', {}, h('b', {}, picked.size), h('span', {}, 'capítulos')));
+    go.disabled = picked.size === 0;
+  };
+  const go = h('button', { class: 'btn primary', onclick: async () => {
+    go.disabled = true;
+    try {
+      await api(`/api/books/${meta.id}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chapters: [...picked], voice, speed, target_language: target }) });
+      location.hash = `#/book/${meta.id}`;
+    } catch (e) { alert(e.message); go.disabled = false; }
+  } }, 'Iniciar conversão');
+
+  const list = h('div', { class: 'list' }, meta.chapters.map((c) => h('label', { class: 'row' },
+    h('input', { type: 'checkbox', checked: true, onchange: (e) => { e.target.checked ? picked.add(c.index) : picked.delete(c.index); updateEst(); } }),
+    h('span', { class: 't' }, `${String(c.index).padStart(2, '0')} · ${c.title}`),
+    h('span', { class: 'm' }, `${c.chars.toLocaleString('pt-BR')} car.`))));
+  const toggleAll = h('button', { class: 'btn', onclick: () => {
+    const all = picked.size === meta.chapters.length;
+    picked.clear(); if (!all) meta.chapters.forEach((c) => picked.add(c.index));
+    list.querySelectorAll('input').forEach((i) => (i.checked = !all)); updateEst();
+  } }, 'Marcar/desmarcar todos');
+
+  const sampleAudio = h('audio', { hidden: true });
+  const voiceBox = h('fieldset', { style: 'border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:8px' });
+  const langNote = h('span', { style: 'font-size:13px;color:var(--muted)' });
+  function renderVoices() {
+    const vs = voicesFor(target);
+    voice = vs[0].id;
+    voiceBox.replaceChildren(
+      h('legend', { style: 'padding:0;margin-bottom:8px;font-weight:500' }, 'Voz'),
+      ...vs.map((v, i) => h('label', { class: 'row' },
+        h('input', { type: 'radio', name: 'voz', checked: i === 0, onchange: () => (voice = v.id) }),
+        h('span', { class: 't' }, h('b', {}, v.label), ` · ${v.gender} · ${v.lang}`),
+        h('button', { class: 'btn', type: 'button', 'aria-label': `Ouvir amostra de ${v.label}`, onclick: (e) => {
+          e.preventDefault(); sampleAudio.src = `/api/voices/${v.id}/sample`; sampleAudio.play().catch(() => {});
+        } }, '▶'))),
+      sampleAudio);
+    const from = srcLang ? srcLang.name : (meta.language || 'idioma não identificado');
+    const to = langs.find((l) => l.code === target).name;
+    langNote.textContent = srcLang && srcLang.code === target
+      ? `Idioma do livro: ${from}. Sem tradução.`
+      : `Idioma do livro: ${from}. Será traduzido para ${to} (tradução local, Argos) antes de narrar.`;
+  }
+  const langSelect = h('select', { id: 'lang', name: 'lang', onchange: (e) => { target = e.target.value; renderVoices(); } },
+    langs.map((l) => h('option', { value: l.code, selected: l.code === target }, l.name)));
+  const langBox = h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
+    h('label', { for: 'lang', style: 'font-weight:500' }, 'Idioma de saída'), langSelect, langNote);
+  renderVoices();
+  const speedLbl = h('span', { style: 'color:var(--accent);font-weight:600' }, '1,0x');
+  const speedIn = h('input', { type: 'range', min: 0.75, max: 1.5, step: 0.05, value: 1, id: 'speed', oninput: (e) => {
+    speed = parseFloat(e.target.value); speedLbl.textContent = speed.toFixed(2).replace('.', ',').replace(/0$/, '') + 'x'; updateEst();
+  } });
+
+  const warn = [];
+  if (meta.scanned_pages) warn.push(h('div', { class: 'msg', style: 'background:var(--warn-soft);color:var(--ink)' },
+    `${meta.scanned_pages} página(s) sem texto (escaneadas) foram ignoradas: OCR ainda não é suportado.`));
+  $app.replaceChildren(
+    h('div', {}, h('h1', {}, meta.title), h('p', { class: 'sub' }, `${meta.pages} páginas · ${meta.chapters.length} capítulos detectados`)),
+    ...warn,
+    h('div', { class: 'cols' },
+      h('div', { class: 'card' }, h('div', { class: 'ctl', style: 'justify-content:space-between' }, h('h2', {}, 'Capítulos'), toggleAll), list),
+      h('div', { class: 'card' }, h('h2', {}, 'Idioma, voz e velocidade'), langBox, voiceBox,
+        h('label', { for: 'speed', style: 'display:flex;justify-content:space-between;font-weight:500' }, 'Velocidade', speedLbl), speedIn,
+        h('h2', {}, 'Estimativa'), est, go)));
+  updateEst();
+}
+
+// ---------- Livro: progresso + player ----------
+async function viewBook(id) {
+  setNav('lib');
+  let meta, current = null, live = null, waiting = false;
+  const audio = h('audio', { controls: true, preload: 'auto' });
+  const titleEl = h('h1', {});
+  const subEl = h('p', { class: 'sub' });
+  const nowEl = h('div', { style: 'font-weight:600' }, 'Escolha um capítulo para ouvir');
+  const noteEl = h('div', { class: 'sub', style: 'margin:0;min-height:1.4em' });
+  const list = h('div', { class: 'list' });
+  const actions = h('div', { class: 'ctl' });
+  const chap = (i) => meta.chapters.find((c) => c.index === i);
+  const label = (i) => `${String(i).padStart(2, '0')} · ${chap(i).title}`;
+  const key = `pos:${id}`;
+  const savePos = () => { if (current != null && !live) try { localStorage.setItem(key, JSON.stringify({ i: current, t: audio.currentTime })); } catch {} };
+  audio.addEventListener('timeupdate', () => { if (Math.floor(audio.currentTime) % 5 === 0) savePos(); });
+
+  const prefetch = (i) => fetch(`/api/books/${id}/prefetch/${i}`, { method: 'POST' }).then(refresh).catch(() => {});
+
+  function playFull(i, at = 0) {
+    live = null; waiting = false; current = i;
+    nowEl.textContent = label(i); noteEl.textContent = '';
+    audio.src = `/api/books/${id}/audio/${i}`;
+    audio.addEventListener('loadedmetadata', () => { audio.currentTime = at; audio.play().catch(() => {}); }, { once: true });
+    prefetch(i); render();
+  }
+  function playPart(i, p) {
+    live = { idx: i, part: p }; waiting = false; current = i;
+    nowEl.textContent = label(i);
+    noteEl.textContent = `Ouvindo enquanto converte · trecho ${p + 1}`;
+    audio.src = `/api/books/${id}/parts/${i}/${p}`;
+    audio.play().catch(() => {});
+    if (p === 0) prefetch(i);
+    render();
+  }
+  function listen(i) {
+    const c = chap(i);
+    if (c.status === 'done') playFull(i);
+    else if (c.parts > 0) playPart(i, 0);
+  }
+  function advance() {
+    const next = chap(current + 1);
+    if (next && (next.status === 'done' || next.parts > 0)) listen(next.index);
+    else if (next) { waiting = true; live = { idx: next.index, part: -1 }; noteEl.textContent = 'Aguardando o próximo capítulo ser convertido…'; }
+  }
+  function onProgressWhileWaiting() {
+    if (!waiting || !live) return;
+    const c = chap(live.idx);
+    if (live.part === -1) { if (c.status === 'done' || c.parts > 0) listen(c.index); return; }
+    if (c.parts > live.part + 1) playPart(live.idx, live.part + 1);
+    else if (c.status === 'done') advance();
+  }
+  audio.addEventListener('ended', () => {
+    if (!live) return advance();
+    const c = chap(live.idx);
+    if (c.parts > live.part + 1) return playPart(live.idx, live.part + 1);
+    if (c.status === 'done') return advance();
+    waiting = true; noteEl.textContent = 'Aguardando o próximo trecho ser convertido…';
+  });
+
+  const skip = (d) => { audio.currentTime = Math.max(0, audio.currentTime + d); };
+  const rate = h('select', { name: 'rate', 'aria-label': 'Velocidade de reprodução', onchange: (e) => { audio.defaultPlaybackRate = audio.playbackRate = parseFloat(e.target.value); } },
+    [0.75, 1, 1.25, 1.5, 1.75, 2].map((r) => h('option', { value: r, selected: r === 1 }, `${r}x`)));
+
+  function render() {
+    titleEl.textContent = meta.title;
+    const done = meta.chapters.filter((c) => c.status === 'done').length;
+    const busy = meta.chapters.some((c) => ['running', 'queued', 'translating'].includes(c.status));
+    subEl.textContent = `${meta.pages} páginas · ${done} de ${meta.chapters.length} capítulos prontos`;
+    actions.replaceChildren(
+      ...(busy ? [h('button', { class: 'btn danger', onclick: () => api(`/api/books/${id}/cancel`, { method: 'POST' }) }, 'Cancelar conversão')] : []),
+      done ? h('a', { class: 'btn primary', href: `/api/books/${id}/download`, download: '' }, `Baixar prontos (${done}) .zip`)
+           : h('span', { class: 'btn', 'aria-disabled': 'true', style: 'opacity:.5' }, 'Baixar prontos (0)'),
+      h('a', { class: 'btn', href: '#/' }, '← Biblioteca'),
+      h('button', { class: 'btn danger', onclick: async () => {
+        if (confirm('Excluir este livro e todos os áudios?')) { await api(`/api/books/${id}`, { method: 'DELETE' }); location.hash = '#/'; }
+      } }, 'Excluir'));
+    list.replaceChildren(...meta.chapters.map((c) => h('div', { class: 'row', style: current === c.index ? 'background:var(--accent-soft);border-radius:8px' : '' },
+      h('span', { class: 't' }, `${String(c.index).padStart(2, '0')} · ${c.title}`,
+        c.status === 'running' || c.status === 'translating' ? h('div', { class: 'bar', style: 'margin-top:6px', role: 'progressbar', 'aria-valuenow': Math.round(c.progress * 100), 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': 'Progresso do capítulo' }, h('i', { style: `width:${c.progress * 100}%` })) : null,
+        c.error ? h('div', { style: 'color:var(--err);font-size:13px' }, c.error) : null),
+      statusChip(c.status),
+      c.status === 'done' ? h('button', { class: 'btn', onclick: () => listen(c.index) }, 'Ouvir') : null,
+      c.status === 'running' && c.parts > 0 ? h('button', { class: 'btn', onclick: () => listen(c.index) }, 'Ouvir agora') : null,
+      c.status === 'done' ? h('a', { class: 'btn', href: `/api/books/${id}/audio/${c.index}?download=1`, download: '', 'aria-label': `Baixar capítulo ${c.index}` }, 'Baixar') : null,
+      c.status === 'failed' || c.status === 'canceled' ? h('button', { class: 'btn', onclick: async () => {
+        await api(`/api/books/${id}/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chapters: [c.index], voice: c.voice || (meta.settings || {}).voice || 'pf_dora', speed: c.speed || (meta.settings || {}).speed || 1 }) });
+        refresh();
+      } }, 'Reprocessar') : null)));
+    return busy;
+  }
+  async function refresh() {
+    try { meta = await api(`/api/books/${id}`); } catch { location.hash = '#/'; return; }
+    const busy = render();
+    onProgressWhileWaiting();
+    clearTimeout(timer);
+    if (busy) timer = setTimeout(refresh, 2000);
+  }
+
+  $app.replaceChildren(
+    h('div', {}, titleEl, subEl),
+    h('div', { class: 'cols' },
+      h('div', { class: 'card player' }, h('h2', {}, 'Player'), nowEl, noteEl, audio,
+        h('div', { class: 'ctl' },
+          h('button', { class: 'round', 'aria-label': 'Voltar 30 segundos', onclick: () => skip(-30) }, '−30'),
+          h('button', { class: 'round', 'aria-label': 'Avançar 30 segundos', onclick: () => skip(30) }, '+30'),
+          h('label', { class: 'ctl' }, h('span', { style: 'color:var(--muted);font-size:13px' }, 'Velocidade'), rate)),
+        actions),
+      h('div', { class: 'card' }, h('h2', {}, 'Capítulos'), list)));
+  await refresh();
+  try {
+    const p = JSON.parse(localStorage.getItem(key) || 'null');
+    if (p && chap(p.i) && chap(p.i).status === 'done') {
+      current = p.i; nowEl.textContent = `${label(p.i)} · retomar de ${fmtTime(p.t)}`;
+      audio.src = `/api/books/${id}/audio/${p.i}`;
+      audio.addEventListener('loadedmetadata', () => (audio.currentTime = p.t), { once: true });
+      render();
+    }
+  } catch {}
+}
+
+// ---------- Roteador ----------
+async function route() {
+  clearTimeout(timer);
+  const [, view, arg] = location.hash.split('/');
+  try {
+    if (view === 'new') await viewNew();
+    else if (view === 'book' && arg) await viewBook(arg);
+    else await viewLibrary();
+  } catch (e) {
+    $app.replaceChildren(h('div', { class: 'msg', role: 'alert' }, `Erro: ${e.message}`));
+  }
+}
+window.addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
