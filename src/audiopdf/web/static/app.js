@@ -25,6 +25,7 @@ const ICONS = {
   more: '<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>',
   alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.1"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/>',
+  video: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10.5l5-3v9l-5-3z"/>',
   book: '<path d="M12 6.5C10.5 5 8 4.5 4.5 4.5v13c3.5 0 6 .5 7.5 2 1.5-1.5 4-2 7.5-2v-13c-3.5 0-6 .5-7.5 2zM12 6.5v13"/>',
   chevl: '<path d="M14.5 6l-6 6 6 6"/>',
   chevr: '<path d="M9.5 6l6 6-6 6"/>',
@@ -108,8 +109,10 @@ const STATUS = {
   failed: ['Falhou', 'fail'], canceled: ['Cancelado', 'warn'], idle: ['Não convertido', 'idle'],
 };
 const chip = (s) => { const [t, k] = STATUS[s] || [s, 'idle']; return h('span', { class: `chip ${k}` }, t); };
+const playable = (c) => c.status === 'done' || (c.status === 'running' && c.parts > 0); // `parts` só vale enquanto converte
 const isBusy = (c) => c.status === 'running' || c.status === 'queued' || c.status === 'translating';
-const metaBusy = (m) => m.chapters.some(isBusy);
+const vBusy = (c) => Object.values(c.videos || {}).some((v) => v.status === 'queued' || v.status === 'running');
+const metaBusy = (m) => m.chapters.some((c) => isBusy(c) || vBusy(c));
 
 // ---------- player global ----------
 const P = {
@@ -139,7 +142,7 @@ const P = {
         if (t > 3 && t < this.a.duration - 5) this.a.currentTime = t;
         this.a.play().catch(() => {});
       }, { once: true });
-    } else if (c.parts > 0) {
+    } else if (playable(c)) {
       this.startPart(idx, 0);
     } else {
       toast('Esse capítulo ainda não tem áudio. Converta-o primeiro.');
@@ -170,7 +173,7 @@ const P = {
   skip(d) { if (Number.isFinite(this.a.duration)) this.a.currentTime = Math.min(this.a.duration, Math.max(0, this.a.currentTime + d)); },
   advance() {
     const next = this.chapter(this.idx + 1);
-    if (next && (next.status === 'done' || next.parts > 0)) this.start(next.index, 0);
+    if (next && playable(next)) this.start(next.index, 0);
     else if (next) { this.waiting = true; this.live = { idx: next.index, part: -1 }; this.paint(); }
     else { this.a.pause(); toast('Fim do livro.'); }
   },
@@ -188,7 +191,7 @@ const P = {
     if (!this.waiting || !this.live) return;
     const c = this.chapter(this.live.idx);
     if (!c) return;
-    if (this.live.part === -1) { if (c.status === 'done' || c.parts > 0) this.start(c.index, 0); return; }
+    if (this.live.part === -1) { if (playable(c)) this.start(c.index, 0); return; }
     if (c.parts > this.live.part + 1) this.startPart(this.live.idx, this.live.part + 1);
     else if (c.status === 'done') this.advance();
   },
@@ -672,6 +675,7 @@ async function viewBook(id) {
   const playing = (c) => P.meta && P.meta.id === id && P.idx === c.index;
 
   function paintHead() {
+    if (head.querySelector('details[open]')) return;
     const done = meta.chapters.filter((c) => c.status === 'done');
     const dur = done.reduce((a, c) => a + (c.duration || 0), 0), busy = metaBusy(meta);
     const s = meta.settings;
@@ -694,7 +698,7 @@ async function viewBook(id) {
     tl.replaceChildren(...meta.chapters.map((c) => {
       const k = c.status === 'done' ? 'done' : isBusy(c) ? 'run' : c.status === 'failed' ? 'fail' : '';
       return h('button', { class: `${k} ${playing(c) ? 'cur' : ''}`, style: `flex-grow:${Math.max(c.chars, 1)}`, title: `${c.index}. ${c.title} · ${STATUS[c.status][0]}`,
-        'aria-label': `Capítulo ${c.index}: ${c.title}, ${STATUS[c.status][0]}`, onclick: () => (c.status === 'done' || c.parts > 0 ? P.open(id, c.index) : toast(`Capítulo ${c.index}: ${STATUS[c.status][0].toLowerCase()}.`)) });
+        'aria-label': `Capítulo ${c.index}: ${c.title}, ${STATUS[c.status][0]}`, onclick: () => (playable(c) ? P.open(id, c.index) : toast(`Capítulo ${c.index}: ${STATUS[c.status][0].toLowerCase()}.`)) });
     }));
     const n = (f) => meta.chapters.filter(f).length;
     legend.replaceChildren(
@@ -705,10 +709,11 @@ async function viewBook(id) {
       h('span', {}, 'A largura de cada trecho é proporcional ao tamanho do capítulo.'));
   }
   function paintList() {
+    if (list.querySelector('details[open]')) return; // não fecha o menu aberto a cada atualização
     const shown = meta.chapters.filter((c) => !q || `${c.index} ${c.title}`.toLowerCase().includes(q));
     if (!shown.length) { list.replaceChildren(h('div', { class: 'empty' }, 'Nenhum capítulo com esse filtro.')); return; }
     list.replaceChildren(...shown.map((c) => {
-      const now = playing(c), can = c.status === 'done' || c.parts > 0;
+      const now = playing(c), can = playable(c);
       const play = h('button', { class: 'btn icon sm ghost', 'aria-label': now && P.playing ? `Pausar capítulo ${c.index}` : `Ouvir capítulo ${c.index}`, disabled: !can,
         onclick: () => (now ? P.toggle() : P.open(id, c.index)) }, ic(now && P.playing ? 'pause' : 'play', 18));
       return h('div', { class: `brow ${now ? 'now' : ''}`, role: 'listitem' },
@@ -716,17 +721,64 @@ async function viewBook(id) {
         h('div', { class: 't' }, h('a', { href: '#', title: c.title, onclick: (e) => { e.preventDefault(); can ? (now ? P.toggle() : P.open(id, c.index)) : toast('Esse capítulo ainda não foi convertido.'); } }, c.title),
           c.status === 'running' || c.status === 'translating'
             ? h('div', { class: 'bar run', style: 'margin-top:6px', role: 'progressbar', 'aria-label': `Progresso do capítulo ${c.index}`, 'aria-valuenow': Math.round(c.progress * 100), 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('i', { style: `width:${c.progress * 100}%` })) : null,
-          c.error ? h('div', { class: 'err' }, c.error) : null),
+          c.error ? h('div', { class: 'err' }, c.error) : null,
+          ...videoLines(c)),
         h('span', { class: 'dur muted num', style: 'font-size:13px' }, c.duration ? fmtClock(c.duration) : ''),
         h('div', { class: 'acts' },
           c.status !== 'done' ? chip(c.status) : null,
           play,
           c.status === 'done' ? h('a', { class: 'btn icon sm ghost', href: `/api/books/${id}/audio/${c.index}?download=1`, download: '', 'aria-label': `Baixar capítulo ${c.index}` }, ic('download', 18)) : null,
+          c.status === 'done' ? videoMenu(c) : null,
           c.status === 'failed' || c.status === 'canceled'
             ? h('button', { class: 'btn icon sm ghost', 'aria-label': `Reprocessar capítulo ${c.index}`, onclick: () => retry(c) }, ic('refresh', 18)) : null));
     }));
   }
   const paintAll = () => { paintHead(); paintTimeline(); paintList(); };
+  const KIND = { leitura: 'vídeo da leitura', resumo: 'vídeo resumo' };
+  const KIND_HINT = { leitura: 'O PDF acompanhado, com o trecho lido em destaque', resumo: 'Só os trechos principais do capítulo, narrados (seleção automática, sem reescrever)' };
+  function videoLines(c) {
+    return Object.entries(c.videos || {}).filter(([, v]) => v.status === 'queued' || v.status === 'running').map(([k, v]) =>
+      h('div', { class: 'hint', style: 'margin-top:6px' }, `Gerando ${KIND[k]}… ${Math.round((v.progress || 0) * 100)}%`,
+        h('div', { class: 'bar run', style: 'margin-top:4px', role: 'progressbar', 'aria-label': `Progresso do ${KIND[k]}`, 'aria-valuenow': Math.round((v.progress || 0) * 100), 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('i', { style: `width:${(v.progress || 0) * 100}%` }))));
+  }
+  async function requestVideo(idx, kind) {
+    try { await post(`/api/books/${id}/chapters/${idx}/video`, { kind }); toast(`Gerando ${KIND[kind]}. Você acompanha o progresso na lista.`); refresh(); } catch (e) { toast(e.message, 'err'); }
+  }
+  async function removeVideo(idx, kind) {
+    if (!await confirmDialog({ title: 'Excluir o vídeo?', body: 'O arquivo será apagado. Dá para gerar de novo depois.', ok: 'Excluir', danger: true })) return;
+    try { await api(`/api/books/${id}/chapters/${idx}/video/${kind}`, { method: 'DELETE' }); refresh(); } catch (e) { toast(e.message, 'err'); }
+  }
+  function watchVideo(c, kind) {
+    P.a.pause();
+    const url = `/api/books/${id}/chapters/${c.index}/video/${kind}`;
+    const vid = h('video', { controls: true, autoplay: true, playsinline: true, src: url, style: 'width:100%;border-radius:8px;background:#000' });
+    const dlg = h('dialog', { style: 'width:min(960px,94vw)', 'aria-label': `Vídeo do capítulo ${c.index}` },
+      h('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:12px' }, h('h2', { style: 'flex:1;min-width:0' }, `Cap. ${c.index} · ${KIND[kind]}`),
+        h('a', { class: 'btn sm', href: `${url}?download=1`, download: '' }, ic('download', 16), 'Baixar'),
+        h('button', { class: 'btn icon sm ghost', 'aria-label': 'Fechar', onclick: () => dlg.close() }, ic('x', 18))), vid);
+    dlg.addEventListener('close', () => { vid.pause(); vid.removeAttribute('src'); dlg.remove(); });
+    document.body.append(dlg); dlg.showModal();
+  }
+  function videoMenu(c) {
+    const close = (e) => e.currentTarget.closest('details').removeAttribute('open');
+    const items = [];
+    for (const kind of ['leitura', 'resumo']) {
+      const v = (c.videos || {})[kind];
+      if (v && (v.status === 'queued' || v.status === 'running')) {
+        items.push(h('div', { class: 'hint', style: 'padding:8px 12px' }, `Gerando ${KIND[kind]}… ${Math.round((v.progress || 0) * 100)}%`));
+      } else if (v && v.status === 'done') {
+        items.push(h('button', { onclick: (e) => { close(e); watchVideo(c, kind); } }, ic('play', 18), `Assistir ${KIND[kind]}`),
+          h('a', { href: `/api/books/${id}/chapters/${c.index}/video/${kind}?download=1`, download: '' }, ic('download', 18), `Baixar ${KIND[kind]}`),
+          h('button', { class: 'danger', onclick: (e) => { close(e); removeVideo(c.index, kind); } }, ic('trash', 18), `Excluir ${KIND[kind]}`));
+      } else {
+        if (v && v.error) items.push(h('div', { class: 'err hint', style: 'padding:8px 12px;color:var(--err)' }, v.error));
+        items.push(h('button', { title: KIND_HINT[kind], onclick: (e) => { close(e); requestVideo(c.index, kind); } }, ic('video', 18), `${v ? 'Tentar de novo: ' : 'Gerar '}${KIND[kind]}`));
+      }
+      items.push(h('div', { class: 'hint', style: 'padding:0 12px 6px' }, KIND_HINT[kind]));
+    }
+    return h('details', { class: 'menu' }, h('summary', { class: 'btn icon sm ghost', 'aria-label': `Vídeos do capítulo ${c.index}`, title: 'Vídeos do capítulo' }, ic('video', 18)),
+      h('div', { class: 'pop', style: 'min-width:280px' }, ...items));
+  }
   async function retry(c) {
     const s = meta.settings || { voice: 'pf_dora', speed: 1, lang: 'pt-BR' };
     try { await post(`/api/books/${id}/jobs`, { chapters: [c.index], voice: c.voice || s.voice, speed: c.speed || s.speed, target_language: c.lang || s.lang, translator: s.translator }); refresh(); } catch (e) { toast(e.message, 'err'); }

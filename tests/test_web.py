@@ -220,3 +220,38 @@ def test_sync_translated_chapter_keeps_pdf_regions(client):
     assert sync["translated"] is True and sync["paragraphs"][0]["text"].startswith("[pt->en]")
     assert all(p["rects"] for p in sync["paragraphs"])  # texto traduzido ↔ regiões do PDF original
     assert sync["timeline"][0]["p"] == -1 and sync["approx"] is False
+
+
+def wait_video(client, book_id, idx, kind, timeout=90):
+    end = time.time() + timeout
+    while time.time() < end:
+        v = (client.get(f"/api/books/{book_id}").json()["chapters"][idx - 1].get("videos") or {}).get(kind) or {}
+        if v.get("status") in ("done", "failed"):
+            return v
+        time.sleep(0.3)
+    raise AssertionError("timeout no vídeo")
+
+
+def test_video_reading_and_summary_flow(client):
+    book = upload(client, make_pdf()).json()
+    bid = book["id"]
+    r = client.post(f"/api/books/{bid}/chapters/1/video", json={"kind": "leitura"})
+    assert r.status_code == 409  # precisa do áudio do capítulo
+    client.post(f"/api/books/{bid}/jobs", json={"chapters": [1], "voice": "pf_dora"})
+    wait_done(client, bid, {1})
+    assert client.post(f"/api/books/{bid}/chapters/1/video", json={"kind": "xyz"}).status_code == 422
+    for kind in ("leitura", "resumo"):
+        assert client.post(f"/api/books/{bid}/chapters/1/video", json={"kind": kind}).status_code == 200
+        v = wait_video(client, bid, 1, kind)
+        assert v["status"] == "done" and v["duration"] > 0 and v["size"] > 1000, v
+        res = client.get(f"/api/books/{bid}/chapters/1/video/{kind}")
+        assert res.status_code == 200 and res.headers["content-type"] == "video/mp4"
+        assert client.get(f"/api/books/{bid}/chapters/1/video/{kind}", headers={"Range": "bytes=0-99"}).status_code == 206
+        assert "attachment" in client.get(f"/api/books/{bid}/chapters/1/video/{kind}?download=1").headers["content-disposition"]
+    assert client.delete(f"/api/books/{bid}/chapters/1/video/leitura").status_code == 200
+    assert client.get(f"/api/books/{bid}/chapters/1/video/leitura").status_code == 404
+    assert client.get(f"/api/books/{bid}/chapters/1/video/outro").status_code == 404
+    # trocar a voz refaz o áudio e descarta os vídeos que dependiam dele
+    client.post(f"/api/books/{bid}/jobs", json={"chapters": [1], "voice": "pm_alex"})
+    wait_done(client, bid, {1})
+    assert client.get(f"/api/books/{bid}/chapters/1/video/resumo").status_code == 404

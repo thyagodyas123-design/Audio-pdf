@@ -2,7 +2,8 @@
 
 Base já pronta nesta branch: **linha do tempo** (cada trecho narrado ↔ parágrafo ↔ região do PDF) e **imagem de cada página**.
 
-## 1. Vídeo "leitura acompanhada" (local, sem IA generativa)
+## 1. Vídeo "leitura acompanhada" (local, sem IA generativa) — IMPLEMENTADO
+Também implementado: *vídeo resumo* extrativo (`summarize.py`): escolhe ~20% dos parágrafos mais representativos e os narra; não reescreve.
 Para cada capítulo: quadros = página do PDF com o parágrafo em destaque, duração = a do trecho narrado; trilha = o MP3 do capítulo.
 `ffmpeg` (concat demuxer) monta o MP4. Entrada: `NN.timeline.json` + `pages/` + `align.json`. Estimativa: poucos minutos por capítulo.
 Limite: mostra o PDF, não "explica" o conteúdo (não cria diagramas nem exemplos novos).

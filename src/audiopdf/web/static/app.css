@@ -189,7 +189,8 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 500;
 .menu summary::-webkit-details-marker { display: none; }
 .menu .pop { position: absolute; right: 0; top: calc(100% + 6px); min-width: 220px; z-index: 15; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
 .menu .pop button { text-align: left; min-height: 40px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; display: flex; gap: 10px; align-items: center; }
-.menu .pop button:hover { background: var(--raised); }
+.menu .pop a { text-align: left; min-height: 40px; padding: 0 12px; border-radius: 8px; display: flex; gap: 10px; align-items: center; }
+.menu .pop a:hover, .menu .pop button:hover { background: var(--raised); }
 .menu .pop button.danger { color: var(--err); }
 .brow { display: grid; grid-template-columns: 2.5ch minmax(0, 1fr) auto auto; align-items: center; gap: 4px 14px; padding: 8px 12px; min-height: 56px; border-bottom: 1px solid var(--line); }
 .brow:last-child { border-bottom: 0; }
@@ -197,7 +198,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 500;
 .brow .t { min-width: 0; }
 .brow .t > a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .brow .err { color: var(--err); font-size: 13px; }
-.brow .acts { display: flex; gap: 2px; justify-content: flex-end; min-width: 44px; }
+.brow .acts { position: relative; display: flex; align-items: center; gap: 2px; justify-content: flex-end; min-width: 44px; }
 .empty { text-align: center; padding: 56px 24px; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .skeleton { background: linear-gradient(90deg, var(--raised), var(--line), var(--raised)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; border-radius: 8px; }
 @keyframes shimmer { to { background-position: -200% 0; } }

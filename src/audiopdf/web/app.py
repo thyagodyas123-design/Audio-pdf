@@ -12,6 +12,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 import pymupdf
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -23,12 +24,14 @@ from starlette.background import BackgroundTask
 from ..align import estimate_timeline, locate_paragraphs
 from ..audio import concat_normalize, duration_of, to_mp3
 from ..chapters import split_chapters
-from ..chunk import chunk_indexed, split_paragraphs
+from ..chunk import chunk_indexed, chunk_text, split_paragraphs
 from ..clean import clean_pages
 from ..extract import extract
 from ..lang import detect
+from ..summarize import select as select_summary
 from ..translate import available_translators, get_translator
 from ..tts import get_provider
+from ..video import build_video, segments_from_timeline
 
 DATA = Path(os.environ.get("AUDIOPDF_DATA", "data")).resolve()
 MAX_BYTES = 200 * 1024 * 1024
@@ -214,8 +217,16 @@ def _resume() -> None:
     root = DATA / "books"
     for p in root.glob("*/meta.json") if root.is_dir() else []:
         meta = json.loads(p.read_text())
+        stale_video = False
+        for c in meta["chapters"]:
+            for v in (c.get("videos") or {}).values():
+                if v.get("status") in ("queued", "running"):
+                    v.update(status="failed", error="interrompido pelo reinício; gere de novo")
+                    stale_video = True
         pending = [c["index"] for c in meta["chapters"] if c["status"] in ("running", "queued", "translating")]
         if not pending:
+            if stale_video:
+                p.write_text(json.dumps(meta, ensure_ascii=False))
             continue
         st = meta.get("settings")
         for c in meta["chapters"]:
@@ -464,6 +475,8 @@ def start_job(book_id: str, job: JobIn):
                 (not translated or c.get("translator") == translator)
             if c["status"] == "done" and not same:
                 (d / f"{c['index']:02d}.mp3").unlink(missing_ok=True)  # outra voz/idioma: refazer
+                _drop_videos(d, c["index"])
+                c.pop("videos", None)
                 shutil.rmtree(d / f"{c['index']:02d}.parts", ignore_errors=True)
                 c["status"] = "idle"
             if c["status"] != "done":
@@ -501,9 +514,8 @@ def part_audio(book_id: str, index: int, part: int):
     return FileResponse(f, media_type="audio/mpeg")
 
 
-@app.get("/api/books/{book_id}/chapters/{index}/sync")
-def chapter_sync(book_id: str, index: int):
-    """Dados para acompanhar o PDF enquanto o áudio toca: parágrafos (com regiões no PDF) e linha do tempo."""
+def _sync_data(book_id: str, index: int) -> dict:
+    """Parágrafos (com regiões no PDF) e linha do tempo de um capítulo, para o leitor e para os vídeos."""
     d = _dir(book_id)
     meta = _load(book_id)
     c = next((x for x in meta["chapters"] if x["index"] == index), None)
@@ -511,11 +523,12 @@ def chapter_sync(book_id: str, index: int):
         raise HTTPException(404, "capítulo não encontrado")
     texts = json.loads((d / "chapters.json").read_text())
     src_paras = split_paragraphs(texts[index - 1])
-    shown, translated = src_paras, False
+    shown, translated, shown_title = src_paras, False, c["title"]
     if c.get("lang") and c.get("translator") and meta.get("language") and meta["language"] != _base(c["lang"]):
         f = d / "translated" / f"{c['translator']}-{_base(c['lang'])}" / f"{index:02d}.json"
         if f.exists():
-            shown, translated = split_paragraphs(json.loads(f.read_text())["text"]), True
+            data = json.loads(f.read_text())
+            shown, translated, shown_title = split_paragraphs(data["text"]), True, data["title"]
     rects = _align(book_id).get(str(index), [])
     n_src, n_shown = len(src_paras), len(shown)
 
@@ -527,10 +540,18 @@ def chapter_sync(book_id: str, index: int):
     if tl_file.exists():
         timeline = json.loads(tl_file.read_text())
     elif c["status"] == "done" and c.get("duration"):
-        timeline, approx = estimate_timeline(c["title"], shown, c["duration"]), True
+        timeline, approx = estimate_timeline(shown_title, shown, c["duration"]), True
     else:
         timeline = []
-    return {"timeline": timeline, "paragraphs": paragraphs, "translated": translated, "approx": approx, "pages": meta["pages"]}
+    first_page = next((r[0][0] - 1 for r in rects if r), 0)
+    return {"timeline": timeline, "paragraphs": paragraphs, "translated": translated, "approx": approx,
+            "pages": meta["pages"], "title": shown_title, "page_start": c.get("page_start", first_page)}
+
+
+@app.get("/api/books/{book_id}/chapters/{index}/sync")
+def chapter_sync(book_id: str, index: int):
+    """Dados para acompanhar o PDF enquanto o áudio toca."""
+    return _sync_data(book_id, index)
 
 
 @app.get("/api/books/{book_id}/pages/{n}")
@@ -548,6 +569,151 @@ def page_image(book_id: str, n: int, w: int = 1000):
         cache.parent.mkdir(exist_ok=True)
         page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).save(str(cache), jpg_quality=80)
     return FileResponse(cache, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+# ---------- vídeos (leitura acompanhada e resumo) ----------
+VIDEO_KINDS = ("leitura", "resumo")
+_vjobs: "queue.Queue[tuple[str, int, str]]" = queue.Queue()
+
+
+def _update_video(book_id: str, idx: int, kind: str, **fields) -> None:
+    with _lock:
+        meta = _load(book_id)
+        for c in meta["chapters"]:
+            if c["index"] == idx:
+                c.setdefault("videos", {}).setdefault(kind, {}).update(fields)
+        _save(book_id, meta)
+
+
+def _drop_videos(d: Path, idx: int) -> None:
+    """Apaga vídeos e o áudio do resumo de um capítulo (o áudio base mudou ou o usuário pediu)."""
+    for suffix in ("leitura.mp4", "resumo.mp4", "resumo.mp3", "resumo.timeline.json"):
+        (d / f"{idx:02d}.{suffix}").unlink(missing_ok=True)
+
+
+def _synth_summary(d: Path, idx: int, tts, voice: str, speed: float, title: str, chosen: list[tuple[int, str]], on_progress) -> list[dict]:
+    """Narra só os trechos escolhidos (título + excerto de cada parágrafo) e devolve a linha do tempo."""
+    items = [(-1, f"{title}.")] + chosen
+    work = d / f".{idx:02d}.resumo.tmp"
+    work.mkdir(exist_ok=True)
+    parts, timeline, t, k = [], [], 0.0, 0
+    try:
+        for n, (p, text) in enumerate(items):
+            pieces = [c for c in chunk_text(text, tts.max_chars) if re.search(r"\w", c)]
+            for j, piece in enumerate(pieces):
+                last = j == len(pieces) - 1
+                data = tts.synthesize(piece, voice, speed, pause_s=(1.0 if p < 0 else 0.7) if last else 0.25)
+                f = work / f"{k:05d}.mp3"
+                to_mp3(data, tts.audio_ext, f)
+                dur = duration_of(f) or 0.0
+                timeline.append({"t": round(t, 2), "d": round(dur, 2), "p": p})
+                parts.append(data)
+                t += dur
+                k += 1
+            on_progress((n + 1) / len(items))
+        concat_normalize(parts, d / f"{idx:02d}.resumo.mp3", ext=tts.audio_ext)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    (d / f"{idx:02d}.resumo.timeline.json").write_text(json.dumps(timeline))
+    return timeline
+
+
+def _make_video(book_id: str, idx: int, kind: str) -> dict:
+    d = _dir(book_id)
+    meta = _load(book_id)
+    c = next(x for x in meta["chapters"] if x["index"] == idx)
+    data = _sync_data(book_id, idx)
+    title, label = data["title"], f"Capítulo {idx} · {data['title']}"
+    prog = lambda f: _update_video(book_id, idx, kind, progress=round(f, 3))
+    if kind == "leitura":
+        audio, timeline, text_of, scale, base = d / f"{idx:02d}.mp3", data["timeline"], None, 1.0, 0.0
+    else:
+        chosen = select_summary([p["text"] for p in data["paragraphs"]])
+        if not chosen:
+            raise RuntimeError("capítulo curto demais para resumir")
+        s = meta.get("settings") or {}
+        voice, speed = c.get("voice") or s.get("voice") or "pf_dora", c.get("speed") or s.get("speed") or 1.0
+        timeline = _synth_summary(d, idx, _provider(), voice, speed, title, chosen, lambda f: prog(0.5 * f))
+        audio, excerpt, scale, base = d / f"{idx:02d}.resumo.mp3", dict(chosen), 0.5, 0.5
+        text_of = lambda p: excerpt[p]
+    if not timeline:
+        raise RuntimeError("sem linha do tempo para este capítulo")
+    segs = segments_from_timeline(timeline, data["paragraphs"], title, data["page_start"], text_of)
+    out = d / f"{idx:02d}.{kind}.mp4"
+    dur = build_video(d / "source.pdf", audio, out, book_title=meta["title"], label=label, segments=segs,
+                      on_progress=lambda f: prog(base + scale * f))
+    return {"duration": round(dur, 1), "size": out.stat().st_size}
+
+
+def _video_worker() -> None:
+    while True:
+        book_id, idx, kind = _vjobs.get()
+        try:
+            _update_video(book_id, idx, kind, status="running", progress=0, error=None)
+            info = _make_video(book_id, idx, kind)
+            _update_video(book_id, idx, kind, status="done", progress=1, **info)
+        except Exception as e:
+            log.warning("falha ao gerar vídeo %s/%s/%s", book_id, idx, kind, exc_info=True)
+            try:
+                _update_video(book_id, idx, kind, status="failed", error=str(e)[:300])
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            _vjobs.task_done()
+
+
+threading.Thread(target=_video_worker, daemon=True).start()
+
+
+class VideoIn(BaseModel):
+    kind: Literal["leitura", "resumo"]
+
+
+@app.post("/api/books/{book_id}/chapters/{index}/video")
+def create_video(book_id: str, index: int, body: VideoIn):
+    meta = _load(book_id)
+    c = next((x for x in meta["chapters"] if x["index"] == index), None)
+    if c is None:
+        raise HTTPException(404, "capítulo não encontrado")
+    if c["status"] != "done":
+        raise HTTPException(409, "Gere o áudio do capítulo antes do vídeo.")
+    cur = (c.get("videos") or {}).get(body.kind) or {}
+    if cur.get("status") in ("queued", "running"):
+        return cur
+    _update_video(book_id, index, body.kind, status="queued", progress=0, error=None)
+    _vjobs.put((book_id, index, body.kind))
+    return {"status": "queued"}
+
+
+@app.get("/api/books/{book_id}/chapters/{index}/video/{kind}")
+def get_video(book_id: str, index: int, kind: str, download: bool = False):
+    if kind not in VIDEO_KINDS:
+        raise HTTPException(404, "tipo de vídeo desconhecido")
+    d = _dir(book_id)
+    f = d / f"{index:02d}.{kind}.mp4"
+    if not f.exists():
+        raise HTTPException(404, "vídeo ainda não gerado")
+    if not download:
+        return FileResponse(f, media_type="video/mp4")
+    title = next((c["title"] for c in _load(book_id)["chapters"] if c["index"] == index), "capitulo")
+    return FileResponse(f, media_type="video/mp4", filename=f"{index:02d} - {_safe(title)} ({kind}).mp4")
+
+
+@app.delete("/api/books/{book_id}/chapters/{index}/video/{kind}")
+def delete_video(book_id: str, index: int, kind: str):
+    if kind not in VIDEO_KINDS:
+        raise HTTPException(404, "tipo de vídeo desconhecido")
+    d = _dir(book_id)
+    (d / f"{index:02d}.{kind}.mp4").unlink(missing_ok=True)
+    if kind == "resumo":
+        _drop_videos(d, index)
+    with _lock:
+        meta = _load(book_id)
+        for c in meta["chapters"]:
+            if c["index"] == index:
+                c.get("videos", {}).pop(kind, None)
+        _save(book_id, meta)
+    return {"ok": True}
 
 
 @app.post("/api/books/{book_id}/prefetch/{index}")
