@@ -121,7 +121,7 @@ def narration_items(lesson: dict) -> list[tuple[str, str, float]]:
     items += [(f"scene:{i}", s["narration"], 0.9) for i, s in enumerate(lesson["scenes"])]
     items.append(("recap", lesson["recap_narration"], 1.0))
     for j, qa in enumerate(lesson["quiz"]):
-        items.append((f"q:{j}", f"{lab['question']} {j + 1}. {qa['q']}", 3.0))  # tempo para pensar
+        items.append((f"q:{j}", f"{lab['question']} {j + 1}. {qa.get('q_say', qa['q'])}", 3.0))  # tempo para pensar
         items.append((f"a:{j}", f"{lab['answer']}. {qa['a']}", 1.2))
     return items
 

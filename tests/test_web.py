@@ -326,3 +326,24 @@ def test_deleting_one_video_kind_keeps_the_others(client):
     client.delete(f"/api/books/{bid}/chapters/1/video/resumo")
     assert client.get(f"/api/books/{bid}/chapters/1/video/leitura").status_code == 200  # não foi apagado junto
     assert client.get(f"/api/books/{bid}/chapters/1/video/resumo").status_code == 404
+
+
+def test_economic_lesson_needs_no_llm_and_is_cached(client, monkeypatch):
+    from audiopdf.web import app as web
+
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setattr(web, "LLM", lambda: (_ for _ in ()).throw(AssertionError("a aula econômica não pode chamar o LLM")))
+    book = upload(client, make_pdf(chapters=1, pages_each=3)).json()
+    bid = book["id"]
+    client.post(f"/api/books/{bid}/jobs", json={"chapters": [1], "voice": "pf_dora"})
+    wait_done(client, bid, {1})
+    assert client.post(f"/api/books/{bid}/chapters/1/video", json={"kind": "aula_simples"}).status_code == 200
+    v = wait_video(client, bid, 1, "aula_simples", timeout=120)
+    assert v["status"] == "done" and v["duration"] > 5, v
+    lesson = json.loads((web.DATA / "books" / bid / "01.aula_simples.json").read_text())
+    assert lesson["model"].startswith("extrativo") and lesson["scenes"] and lesson["quiz"]
+    assert client.get(f"/api/books/{bid}/chapters/1/video/aula_simples").headers["content-type"] == "video/mp4"
+    assert client.get("/api/capabilities").json()["budget_chars"] == web.LESSON_BUDGET
+    client.delete(f"/api/books/{bid}/chapters/1/video/aula_simples")
+    assert client.get(f"/api/books/{bid}/chapters/1/video/aula_simples").status_code == 404

@@ -18,6 +18,10 @@ Documentação: [`docs/requisitos.md`](docs/requisitos.md) · decisões pendente
 - **Vídeo-aula** (formato educacional): um LLM escreve o roteiro do capítulo (cenas com tópicos, explicação, resumo e 3 perguntas com resposta),
   que é narrado e montado em vídeo com os tópicos aparecendo junto da fala e a página do PDF de origem em destaque. Exige `OPENCODE_API_KEY`
   (ou `LLM_API_KEY` + `LLM_BASE_URL`) no `.env`; o texto do capítulo é enviado ao provedor. O roteiro fica em cache (`NN.aula.json`).
+  Custo: o texto enviado por capítulo é limitado a `LESSON_BUDGET_CHARS` (padrão 20 mil caracteres, ~6 mil tokens): acima disso vão só os trechos
+  mais representativos. Com um servidor local (Ollama/LM Studio em `LLM_BASE_URL`) não há chave nem custo.
+- **Vídeo-aula econômica** (sem IA, custo zero): mesmo formato, com as frases mais representativas como tópicos, os títulos do próprio livro
+  como cenas e perguntas de completar. Não reescreve nem explica; a qualidade é bem inferior à da aula com IA.
 - TTS local **Kokoro** (GPU Apple/MPS se disponível); tradução local **Argos** (pt ↔ en). Azure TTS como adapter opcional.
 - OCR (Tesseract) das páginas sem texto; pausas por parágrafo na narração.
 - Tradutores: Argos (local), DeepL e Claude (precisam de `DEEPL_API_KEY` / `ANTHROPIC_API_KEY`).
@@ -57,6 +61,7 @@ src/audiopdf/
   chapters.py   capítulos por bookmarks (nível 2 sob "Partes"), pula copyright/sumário/índice
   chunk.py      trechos por frase para o limite do TTS
   llm.py        cliente de chat compatível com OpenAI (retry/backoff, erros claros)
+  lesson_local.py roteiro de aula sem IA (extrativo + perguntas de lacuna)
   lesson.py     roteiro de aula por LLM (cenas, resumo, perguntas) com validação
   lesson_video.py quadros e montagem do vídeo-aula
   summarize.py  resumo extrativo (parágrafos mais representativos)

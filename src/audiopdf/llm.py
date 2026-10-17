@@ -16,8 +16,13 @@ class LLMError(RuntimeError):
     """Falha do provedor com mensagem pronta para o usuário."""
 
 
+def _is_local(url: str) -> bool:
+    return bool(re.match(r"https?://(localhost|127\.0\.0\.1|\[::1\])(:|/|$)", url))
+
+
 def configured() -> bool:
-    return bool(os.environ.get("LLM_API_KEY") or os.environ.get("OPENCODE_API_KEY"))
+    """Há chave, ou o endereço aponta para um servidor local (Ollama, LM Studio), que dispensa chave."""
+    return bool(os.environ.get("LLM_API_KEY") or os.environ.get("OPENCODE_API_KEY") or _is_local(os.environ.get("LLM_BASE_URL", "")))
 
 
 def extract_json(text: str) -> dict:
@@ -32,10 +37,10 @@ def extract_json(text: str) -> dict:
 class LLM:
     def __init__(self, client: httpx.Client | None = None, base_url: str | None = None,
                  key: str | None = None, model: str | None = None) -> None:
-        self.key = key or os.environ.get("LLM_API_KEY") or os.environ.get("OPENCODE_API_KEY")
+        self.base = (base_url or os.environ.get("LLM_BASE_URL") or DEFAULT_BASE).rstrip("/")
+        self.key = key or os.environ.get("LLM_API_KEY") or os.environ.get("OPENCODE_API_KEY") or ("local" if _is_local(self.base) else None)
         if not self.key:
             raise LLMError("Nenhuma chave de LLM configurada (OPENCODE_API_KEY ou LLM_API_KEY no .env).")
-        self.base = (base_url or os.environ.get("LLM_BASE_URL") or DEFAULT_BASE).rstrip("/")
         self.model = model or os.environ.get("LESSON_MODEL") or DEFAULT_MODEL
         self._client = client or httpx.Client(timeout=120)
 

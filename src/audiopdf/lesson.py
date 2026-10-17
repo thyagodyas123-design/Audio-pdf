@@ -3,6 +3,7 @@ O texto do capítulo vai ao provedor de LLM configurado; use apenas conteúdo qu
 from collections.abc import Callable
 
 from .llm import LLM, LLMError, extract_json
+from .summarize import select
 
 BLOCK_CHARS = 5500
 MAX_SCENES = 14
@@ -107,12 +108,21 @@ def _ask(llm: LLM, lang: str, prompt: str, check: Callable[[dict], dict], max_to
 
 
 def build_lesson(llm: LLM, title: str, paragraphs: list[str], lang_code: str = "pt",
-                 on_progress: Callable[[float], None] | None = None) -> dict:
+                 on_progress: Callable[[float], None] | None = None, budget_chars: int | None = None) -> dict:
+    """`budget_chars` limita o texto enviado ao LLM (custo): acima disso, só os trechos mais representativos
+    (resumo extrativo) vão ao modelo, mantendo a numeração original dos parágrafos."""
     lang = LANGS.get(lang_code, "the same language as the text")
-    groups = blocks(paragraphs)
+    total = sum(len(p) for p in paragraphs)
+    if budget_chars and total > budget_chars:
+        picked = select(paragraphs, ratio=budget_chars / total, max_chars=budget_chars, min_paras=4, excerpt_chars=700)
+    else:
+        picked = list(enumerate(paragraphs))
+    ids, texts = [i for i, _ in picked], [t for _, t in picked]
+    groups = [[ids[k] for k in g] for g in blocks(texts)]
+    by_id = dict(picked)
     scenes = []
     for k, idxs in enumerate(groups):
-        body = "\n\n".join(f"[{i}] {paragraphs[i]}" for i in idxs)
+        body = "\n\n".join(f"[{i}] {by_id[i]}" for i in idxs)
         prompt = SCENE_PROMPT.format(title=title, i=k + 1, n=len(groups), body=body)
         scenes.append(_ask(llm, lang, prompt, lambda o, v=idxs: validate_scene(o, v), 1500))
         if on_progress:

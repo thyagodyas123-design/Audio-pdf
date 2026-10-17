@@ -114,3 +114,70 @@ def test_lesson_segments_reveal_bullets_and_keep_total_time():
     assert [s["shown"] for s in scene_a] == [1, 2, 3] and scene_a[-1]["note"] == "ex" and scene_a[0]["page"] == 7
     assert [s["kind"] for s in segs[-4:]] == ["quiz_q", "quiz_a", "quiz_q", "quiz_a"]
     assert segs[-1]["note"] == "R2" and segs[-2]["note"] is None
+
+
+# ---------- modo econômico (sem IA) e orçamento ----------
+from audiopdf.lesson_local import build_local_lesson, shorten
+
+TEXT_PT = [
+    "Ordenação por inserção",
+    "A ordenação por inserção funciona bem para poucos elementos. O algoritmo percorre a sequência e insere cada elemento na posição correta dentro da parte já ordenada. "
+    "Por exemplo, ao ordenar cartas na mão, pegamos uma carta por vez e a colocamos entre as cartas já ordenadas.",
+    "O tempo de execução da ordenação por inserção depende da ordem inicial dos elementos. No melhor caso, a sequência já está ordenada e o tempo é linear. "
+    "No pior caso, a sequência está em ordem inversa e o tempo cresce com o quadrado do tamanho da entrada.",
+    "Ordenação por intercalação",
+    "A ordenação por intercalação divide a sequência ao meio, ordena cada metade recursivamente e depois intercala as duas metades ordenadas. "
+    "A intercalação das metades é feita em tempo linear, o que torna o algoritmo mais eficiente que a inserção para sequências grandes.",
+] * 3
+
+
+def test_local_lesson_has_the_same_schema_and_uses_book_headings():
+    lesson = build_local_lesson("Ordenação", TEXT_PT, "pt")
+    assert lesson["model"].startswith("extrativo") and lesson["lang"] == "pt"
+    assert lesson["scenes"] and lesson["recap"] and lesson["quiz"] and lesson["intro"]
+    assert lesson["scenes"][0]["title"] == "Ordenação por inserção"
+    for sc in lesson["scenes"]:
+        assert sc["bullets"] and all(len(b) <= 111 for b in sc["bullets"])
+        assert all(0 <= r < len(TEXT_PT) for r in sc["refs"]) and "narration" in sc
+    q = lesson["quiz"][0]
+    assert "_____" in q["q"] and "_____" not in q["q_say"] and q["a"].split(".")[0].lower() in " ".join(TEXT_PT).lower()
+    items = narration_items(lesson)
+    assert "..." in [t for k, t, _ in items if k == "q:0"][0]  # a lacuna é falada como pausa, não como "sublinhado"
+
+
+def test_local_lesson_is_deterministic_and_handles_english():
+    assert build_local_lesson("X", TEXT_PT, "pt") == build_local_lesson("X", TEXT_PT, "pt")
+    assert build_local_lesson("X", TEXT_PT, "en")["intro"].startswith("In this lesson")
+    with pytest.raises(ValueError):
+        build_local_lesson("X", ["curto"], "pt")
+
+
+def test_shorten_cuts_at_clause_boundaries():
+    s = shorten("Uma frase muito longa, com várias cláusulas e um final que passa muito do limite estabelecido para os tópicos da cena", 60)
+    assert len(s) <= 61 and s.endswith("…") and not s.endswith(",…")
+
+
+def test_budget_sends_only_selected_excerpts_with_original_numbers():
+    paras = [f"Parágrafo {i}: " + ("conteúdo técnico sobre algoritmos e dados " * 12) for i in range(40)]
+    prompts = []
+
+    class Spy(ScriptedLLM):
+        def chat(self, system, user, max_tokens=0, temperature=0):
+            prompts.append(user)
+            return json.dumps(SCENE | {"refs": [int(__import__("re").findall(r"\[(\d+)\]", user)[0])]}) if "Section" in user else json.dumps(FINAL)
+
+    lesson = build_lesson(Spy([]), "Cap", paras, "pt", budget_chars=4000)
+    sent = sum(len(p) for p in prompts[:-1])
+    assert sent < 0.4 * sum(len(p) for p in paras)  # bem menos que o capítulo inteiro
+    numbers = {int(n) for p in prompts[:-1] for n in __import__("re").findall(r"\[(\d+)\]", p)}
+    assert numbers <= set(range(40)) and len(numbers) < 40
+    assert all(0 <= r < 40 for sc in lesson["scenes"] for r in sc["refs"])
+
+
+def test_local_servers_need_no_key(monkeypatch):
+    for k in ("OPENCODE_API_KEY", "LLM_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("LLM_BASE_URL", "http://localhost:11434/v1")
+    assert llm_mod.configured() is True and LLM().key == "local"
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.exemplo.com/v1")
+    assert llm_mod.configured() is False

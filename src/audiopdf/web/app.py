@@ -29,6 +29,7 @@ from ..clean import clean_pages
 from ..extract import extract
 from ..lang import detect
 from ..lesson import build_lesson
+from ..lesson_local import build_local_lesson
 from ..lesson_video import make_lesson_video
 from ..llm import LLM
 from ..llm import configured as llm_configured
@@ -273,7 +274,7 @@ def _summary(meta: dict) -> dict:
 @app.get("/api/capabilities")
 def capabilities():
     """O que está disponível neste servidor (a interface esconde o que não funciona)."""
-    return {"llm": llm_configured(), "llm_model": os.environ.get("LESSON_MODEL") or "gemini-3.8-flash"}
+    return {"llm": llm_configured(), "llm_model": os.environ.get("LESSON_MODEL") or "gemini-3.8-flash", "budget_chars": LESSON_BUDGET}
 
 
 @app.get("/api/translators")
@@ -582,8 +583,9 @@ def page_image(book_id: str, n: int, w: int = 1000):
 
 
 # ---------- vídeos (leitura acompanhada e resumo) ----------
-VIDEO_KINDS = ("leitura", "resumo", "aula")
-VIDEO_FILES = {"leitura": ["leitura.mp4"], "resumo": ["resumo.mp4", "resumo.mp3", "resumo.timeline.json"], "aula": ["aula.mp4"]}
+VIDEO_KINDS = ("leitura", "resumo", "aula_simples", "aula")
+LESSON_BUDGET = int(os.environ.get("LESSON_BUDGET_CHARS", "20000"))  # teto de texto enviado ao LLM por capítulo (custo)
+VIDEO_FILES = {"leitura": ["leitura.mp4"], "resumo": ["resumo.mp4", "resumo.mp3", "resumo.timeline.json"], "aula": ["aula.mp4"], "aula_simples": ["aula_simples.mp4"]}
 _vjobs: "queue.Queue[tuple[str, int, str]]" = queue.Queue()
 
 
@@ -602,7 +604,8 @@ def _drop_videos(d: Path, idx: int, kinds: tuple[str, ...] = VIDEO_KINDS) -> Non
         for suffix in VIDEO_FILES[kind]:
             (d / f"{idx:02d}.{suffix}").unlink(missing_ok=True)
     if kinds == VIDEO_KINDS:
-        (d / f"{idx:02d}.aula.json").unlink(missing_ok=True)
+        for k in ("aula", "aula_simples"):
+            (d / f"{idx:02d}.{k}.json").unlink(missing_ok=True)
 
 
 def _synth_summary(d: Path, idx: int, tts, voice: str, speed: float, title: str, chosen: list[tuple[int, str]], on_progress) -> list[dict]:
@@ -632,18 +635,23 @@ def _synth_summary(d: Path, idx: int, tts, voice: str, speed: float, title: str,
     return timeline
 
 
-def _make_lesson(d: Path, meta: dict, c: dict, data: dict, idx: int, title: str, label: str, prog) -> dict:
-    """Vídeo-aula: roteiro por LLM (guardado em NN.aula.json para não pagar de novo), narração e quadros."""
-    lesson_file = d / f"{idx:02d}.aula.json"
+def _make_lesson(d: Path, meta: dict, c: dict, data: dict, idx: int, title: str, label: str, prog, kind: str = "aula") -> dict:
+    """Vídeo-aula. `aula`: roteiro por LLM (guardado em NN.aula.json para não pagar de novo). `aula_simples`: roteiro sem IA, custo zero."""
+    lesson_file = d / f"{idx:02d}.{kind}.json"
     if lesson_file.exists():
         lesson = json.loads(lesson_file.read_text())
     else:
         lang = _base(c["lang"]) if c.get("lang") else (meta.get("language") or "pt")
-        lesson = build_lesson(LLM(), title, [p["text"] for p in data["paragraphs"]], lang, lambda f: prog(0.25 * f))
+        paras = [p["text"] for p in data["paragraphs"]]
+        if kind == "aula_simples":
+            lesson = build_local_lesson(title, paras, lang)
+            prog(0.25)
+        else:
+            lesson = build_lesson(LLM(), title, paras, lang, lambda f: prog(0.25 * f), budget_chars=LESSON_BUDGET)
         lesson_file.write_text(json.dumps(lesson, ensure_ascii=False))
     s = meta.get("settings") or {}
     voice, speed = c.get("voice") or s.get("voice") or "pf_dora", c.get("speed") or s.get("speed") or 1.0
-    work, out = d / f".{idx:02d}.aula.work", d / f"{idx:02d}.aula.mp4"
+    work, out = d / f".{idx:02d}.{kind}.work", d / f"{idx:02d}.{kind}.mp4"
     try:
         dur = make_lesson_video(d / "source.pdf", out, lesson, data["paragraphs"], data["page_start"], _provider(), voice, speed,
                                 work, meta["title"], f"Aula · {label}", on_progress=lambda f: prog(0.25 + 0.75 * f))
@@ -659,8 +667,8 @@ def _make_video(book_id: str, idx: int, kind: str) -> dict:
     data = _sync_data(book_id, idx)
     title, label = data["title"], f"Capítulo {idx} · {data['title']}"
     prog = lambda f: _update_video(book_id, idx, kind, progress=round(f, 3))
-    if kind == "aula":
-        return _make_lesson(d, meta, c, data, idx, title, label, prog)
+    if kind in ("aula", "aula_simples"):
+        return _make_lesson(d, meta, c, data, idx, title, label, prog, kind)
     if kind == "leitura":
         audio, timeline, text_of, scale, base = d / f"{idx:02d}.mp3", data["timeline"], None, 1.0, 0.0
     else:
@@ -702,7 +710,7 @@ threading.Thread(target=_video_worker, daemon=True).start()
 
 
 class VideoIn(BaseModel):
-    kind: Literal["leitura", "resumo", "aula"]
+    kind: Literal["leitura", "resumo", "aula_simples", "aula"]
 
 
 @app.post("/api/books/{book_id}/chapters/{index}/video")

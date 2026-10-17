@@ -735,8 +735,8 @@ async function viewBook(id) {
     }));
   }
   const paintAll = () => { paintHead(); paintTimeline(); paintList(); };
-  const KIND = { leitura: 'vídeo da leitura', resumo: 'vídeo resumo', aula: 'vídeo-aula' };
-  const KIND_HINT = { leitura: 'O PDF acompanhado, com o trecho lido em destaque', resumo: 'Só os trechos principais do capítulo, narrados (seleção automática, sem reescrever)', aula: 'Aula educacional gerada por IA: tópicos que aparecem junto da explicação, resumo e perguntas com resposta. O texto do capítulo é enviado ao provedor de LLM configurado.' };
+  const KIND = { leitura: 'vídeo da leitura', resumo: 'vídeo resumo', aula: 'vídeo-aula com IA', aula_simples: 'vídeo-aula econômica' };
+  const KIND_HINT = { leitura: 'O PDF acompanhado, com o trecho lido em destaque', resumo: 'Só os trechos principais do capítulo, narrados (seleção automática, sem reescrever)', aula: 'Aula educacional escrita por IA: tópicos, explicação, resumo e perguntas. Tem custo no provedor de LLM e envia o texto do capítulo a ele.', aula_simples: 'Mesmo formato da aula, sem IA e sem custo: usa as frases mais representativas e perguntas de completar. Não reescreve nem explica.' };
   function videoLines(c) {
     return Object.entries(c.videos || {}).filter(([, v]) => v.status === 'queued' || v.status === 'running').map(([k, v]) =>
       h('div', { class: 'hint', style: 'margin-top:6px' }, `Gerando ${KIND[k]}… ${Math.round((v.progress || 0) * 100)}%`,
@@ -763,7 +763,7 @@ async function viewBook(id) {
   function videoMenu(c) {
     const close = (e) => e.currentTarget.closest('details').removeAttribute('open');
     const items = [];
-    for (const kind of ['leitura', 'resumo', 'aula']) {
+    for (const kind of ['leitura', 'resumo', 'aula_simples', 'aula']) {
       const v = (c.videos || {})[kind];
       if (v && (v.status === 'queued' || v.status === 'running')) {
         items.push(h('div', { class: 'hint', style: 'padding:8px 12px' }, `Gerando ${KIND[kind]}… ${Math.round((v.progress || 0) * 100)}%`));
@@ -778,7 +778,8 @@ async function viewBook(id) {
         if (v && v.error) items.push(h('div', { class: 'err hint', style: 'padding:8px 12px;color:var(--err)' }, v.error));
         items.push(h('button', { title: KIND_HINT[kind], onclick: (e) => { close(e); requestVideo(c.index, kind); } }, ic('video', 18), `${v ? 'Tentar de novo: ' : 'Gerar '}${KIND[kind]}`));
       }
-      items.push(h('div', { class: 'hint', style: 'padding:0 12px 6px' }, KIND_HINT[kind]));
+      const est = kind === 'aula' ? ` Estimativa: ~${Math.max(1, Math.round(Math.min(c.chars, caps.budget_chars || 20000) / 3500))} mil tokens de entrada.` : '';
+      items.push(h('div', { class: 'hint', style: 'padding:0 12px 6px' }, KIND_HINT[kind] + est));
     }
     return h('details', { class: 'menu' }, h('summary', { class: 'btn icon sm ghost', 'aria-label': `Vídeos do capítulo ${c.index}`, title: 'Vídeos do capítulo' }, ic('video', 18)),
       h('div', { class: 'pop', style: 'min-width:280px' }, ...items));
