@@ -31,3 +31,15 @@ def to_mp3(data: bytes, ext: str, dest: Path) -> None:
          "-ar", "44100", "-ac", "1", "-b:a", "128k", str(dest)],
         input=data, check=True,
     )
+
+
+def duration_of(path: Path) -> float | None:
+    """Duração em segundos (ffprobe) ou None se não for possível ler."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return round(float(out), 1)
+    except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
+        return None

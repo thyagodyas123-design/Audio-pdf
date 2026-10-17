@@ -103,6 +103,9 @@ def test_convert_same_language_then_download(client):
     assert client.get(f"/api/books/{book['id']}/audio/1", headers={"Range": "bytes=0-9"}).status_code == 206
     dl = client.get(f"/api/books/{book['id']}/audio/1?download=1")
     assert "attachment" in dl.headers["content-disposition"]
+    assert all(c["duration"] and c["duration"] > 0 for c in meta["chapters"])  # ffprobe grava a duração
+    summary = next(b for b in client.get("/api/books").json() if b["id"] == book["id"])
+    assert summary["duration"] > 0 and summary["done"] == 2
     z = zipfile.ZipFile(io.BytesIO(client.get(f"/api/books/{book['id']}/download").content))
     assert len(z.namelist()) == 2 and z.namelist()[0].startswith("01 - ")
 

@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from ..audio import concat_normalize, to_mp3
+from ..audio import concat_normalize, duration_of, to_mp3
 from ..chapters import split_chapters
 from ..chunk import chunk_paragraphs
 from ..clean import clean_pages
@@ -186,6 +186,7 @@ def _worker() -> None:
                 try:
                     _synth_chapter(d, book_id, idx, texts, tts, voice, speed, src, tgt, translator)
                     _update_chapter(book_id, idx, status="done", progress=1, voice=voice, speed=speed, lang=lang,
+                                    duration=duration_of(d / f"{idx:02d}.mp3"),
                                     translator=translator if src and src != tgt else None)
                 except InterruptedError:
                     _update_chapter(book_id, idx, status="canceled", progress=0)
@@ -240,6 +241,7 @@ def _summary(meta: dict) -> dict:
         "done": sum(c["status"] == "done" for c in ch),
         "running": sum(c["status"] in ("running", "queued", "translating") for c in ch),
         "failed": sum(c["status"] == "failed" for c in ch),
+        "duration": round(sum(c.get("duration") or 0 for c in ch)),
     }
 
 
@@ -278,6 +280,7 @@ def list_books():
     root = DATA / "books"
     if root.is_dir():
         for p in root.glob("*/meta.json"):
+            _fill_durations(p.parent.name)
             books.append(_summary(json.loads(p.read_text())))
     return sorted(books, key=lambda b: b["created"], reverse=True)
 
@@ -358,8 +361,23 @@ def reanalyze(book_id: str):
         return meta
 
 
+def _fill_durations(book_id: str) -> None:
+    d = _dir(book_id)
+    with _lock:
+        meta = _load(book_id)
+        dirty = False
+        for c in meta["chapters"]:
+            f = d / f"{c['index']:02d}.mp3"
+            if c["status"] == "done" and c.get("duration") is None and f.exists():
+                c["duration"] = duration_of(f)
+                dirty = True
+        if dirty:
+            _save(book_id, meta)
+
+
 @app.get("/api/books/{book_id}")
 def get_book(book_id: str):
+    _fill_durations(book_id)
     return _load(book_id)
 
 

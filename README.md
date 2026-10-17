@@ -6,8 +6,9 @@ Documentação: [`docs/requisitos.md`](docs/requisitos.md) · decisões pendente
 ## Status: Fase 0 + app local
 
 - CLI: PDF com texto selecionável → MP3 por capítulo.
-- App local (FastAPI + página única): upload, capítulos, idioma de saída, voz, fila, player que toca
-  enquanto converte, pré-busca do próximo capítulo e download (ZIP ou por capítulo).
+- App local (FastAPI + HTML/CSS/JS sem build): upload com progresso, escolha de capítulos/idioma/voz, fila, linha do tempo
+  do livro, **player fixo** que continua ao navegar (toca enquanto converte, retoma de onde parou, timer de sono,
+  teclas espaço/←/→, controles do sistema), pré-busca do próximo capítulo e download (ZIP ou por capítulo). Claro/escuro automático.
 - TTS local **Kokoro** (GPU Apple/MPS se disponível); tradução local **Argos** (pt ↔ en). Azure TTS como adapter opcional.
 - OCR (Tesseract) das páginas sem texto; pausas por parágrafo na narração.
 - Tradutores: Argos (local), DeepL e Claude (precisam de `DEEPL_API_KEY` / `ANTHROPIC_API_KEY`).
@@ -50,7 +51,7 @@ src/audiopdf/
   translate/    adapter + Argos (local)
   tts/          adapter: kokoro (local), azure
   audio.py      FFmpeg: concat + loudnorm -16 LUFS, MP3 44,1 kHz mono 128k
-  web/          API FastAPI + static/index.html
+  web/          API FastAPI + static/ (index.html, app.css, app.js)
   cli.py
 ```
 
