@@ -28,6 +28,10 @@ from ..chunk import chunk_indexed, chunk_text, split_paragraphs
 from ..clean import clean_pages
 from ..extract import extract
 from ..lang import detect
+from ..lesson import build_lesson
+from ..lesson_video import make_lesson_video
+from ..llm import LLM
+from ..llm import configured as llm_configured
 from ..summarize import select as select_summary
 from ..translate import available_translators, get_translator
 from ..tts import get_provider
@@ -264,6 +268,12 @@ def _summary(meta: dict) -> dict:
         "failed": sum(c["status"] == "failed" for c in ch),
         "duration": round(sum(c.get("duration") or 0 for c in ch)),
     }
+
+
+@app.get("/api/capabilities")
+def capabilities():
+    """O que está disponível neste servidor (a interface esconde o que não funciona)."""
+    return {"llm": llm_configured(), "llm_model": os.environ.get("LESSON_MODEL") or "gemini-3.8-flash"}
 
 
 @app.get("/api/translators")
@@ -572,7 +582,8 @@ def page_image(book_id: str, n: int, w: int = 1000):
 
 
 # ---------- vídeos (leitura acompanhada e resumo) ----------
-VIDEO_KINDS = ("leitura", "resumo")
+VIDEO_KINDS = ("leitura", "resumo", "aula")
+VIDEO_FILES = {"leitura": ["leitura.mp4"], "resumo": ["resumo.mp4", "resumo.mp3", "resumo.timeline.json"], "aula": ["aula.mp4"]}
 _vjobs: "queue.Queue[tuple[str, int, str]]" = queue.Queue()
 
 
@@ -585,10 +596,13 @@ def _update_video(book_id: str, idx: int, kind: str, **fields) -> None:
         _save(book_id, meta)
 
 
-def _drop_videos(d: Path, idx: int) -> None:
-    """Apaga vídeos e o áudio do resumo de um capítulo (o áudio base mudou ou o usuário pediu)."""
-    for suffix in ("leitura.mp4", "resumo.mp4", "resumo.mp3", "resumo.timeline.json"):
-        (d / f"{idx:02d}.{suffix}").unlink(missing_ok=True)
+def _drop_videos(d: Path, idx: int, kinds: tuple[str, ...] = VIDEO_KINDS) -> None:
+    """Apaga os vídeos (e arquivos auxiliares) de um capítulo. Sem `kinds`, apaga tudo, inclusive o roteiro da aula."""
+    for kind in kinds:
+        for suffix in VIDEO_FILES[kind]:
+            (d / f"{idx:02d}.{suffix}").unlink(missing_ok=True)
+    if kinds == VIDEO_KINDS:
+        (d / f"{idx:02d}.aula.json").unlink(missing_ok=True)
 
 
 def _synth_summary(d: Path, idx: int, tts, voice: str, speed: float, title: str, chosen: list[tuple[int, str]], on_progress) -> list[dict]:
@@ -618,6 +632,26 @@ def _synth_summary(d: Path, idx: int, tts, voice: str, speed: float, title: str,
     return timeline
 
 
+def _make_lesson(d: Path, meta: dict, c: dict, data: dict, idx: int, title: str, label: str, prog) -> dict:
+    """Vídeo-aula: roteiro por LLM (guardado em NN.aula.json para não pagar de novo), narração e quadros."""
+    lesson_file = d / f"{idx:02d}.aula.json"
+    if lesson_file.exists():
+        lesson = json.loads(lesson_file.read_text())
+    else:
+        lang = _base(c["lang"]) if c.get("lang") else (meta.get("language") or "pt")
+        lesson = build_lesson(LLM(), title, [p["text"] for p in data["paragraphs"]], lang, lambda f: prog(0.25 * f))
+        lesson_file.write_text(json.dumps(lesson, ensure_ascii=False))
+    s = meta.get("settings") or {}
+    voice, speed = c.get("voice") or s.get("voice") or "pf_dora", c.get("speed") or s.get("speed") or 1.0
+    work, out = d / f".{idx:02d}.aula.work", d / f"{idx:02d}.aula.mp4"
+    try:
+        dur = make_lesson_video(d / "source.pdf", out, lesson, data["paragraphs"], data["page_start"], _provider(), voice, speed,
+                                work, meta["title"], f"Aula · {label}", on_progress=lambda f: prog(0.25 + 0.75 * f))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return {"duration": round(dur, 1), "size": out.stat().st_size, "model": lesson.get("model")}
+
+
 def _make_video(book_id: str, idx: int, kind: str) -> dict:
     d = _dir(book_id)
     meta = _load(book_id)
@@ -625,6 +659,8 @@ def _make_video(book_id: str, idx: int, kind: str) -> dict:
     data = _sync_data(book_id, idx)
     title, label = data["title"], f"Capítulo {idx} · {data['title']}"
     prog = lambda f: _update_video(book_id, idx, kind, progress=round(f, 3))
+    if kind == "aula":
+        return _make_lesson(d, meta, c, data, idx, title, label, prog)
     if kind == "leitura":
         audio, timeline, text_of, scale, base = d / f"{idx:02d}.mp3", data["timeline"], None, 1.0, 0.0
     else:
@@ -655,7 +691,7 @@ def _video_worker() -> None:
         except Exception as e:
             log.warning("falha ao gerar vídeo %s/%s/%s", book_id, idx, kind, exc_info=True)
             try:
-                _update_video(book_id, idx, kind, status="failed", error=str(e)[:300])
+                _update_video(book_id, idx, kind, status="failed", error=str(e)[:400])
             except Exception:  # noqa: BLE001
                 pass
         finally:
@@ -666,7 +702,7 @@ threading.Thread(target=_video_worker, daemon=True).start()
 
 
 class VideoIn(BaseModel):
-    kind: Literal["leitura", "resumo"]
+    kind: Literal["leitura", "resumo", "aula"]
 
 
 @app.post("/api/books/{book_id}/chapters/{index}/video")
@@ -705,8 +741,7 @@ def delete_video(book_id: str, index: int, kind: str):
         raise HTTPException(404, "tipo de vídeo desconhecido")
     d = _dir(book_id)
     (d / f"{index:02d}.{kind}.mp4").unlink(missing_ok=True)
-    if kind == "resumo":
-        _drop_videos(d, index)
+    _drop_videos(d, index, (kind,))
     with _lock:
         meta = _load(book_id)
         for c in meta["chapters"]:

@@ -663,6 +663,7 @@ async function viewConvert(id) {
 async function viewBook(id) {
   setNav('lib');
   let meta = await api(`/api/books/${id}`);
+  const caps = await api('/api/capabilities').catch(() => ({ llm: false }));
   document.title = `${meta.title} · Audio-PDF`;
   let q = '', timer = null, alive = true;
   P.setMeta(meta);
@@ -734,8 +735,8 @@ async function viewBook(id) {
     }));
   }
   const paintAll = () => { paintHead(); paintTimeline(); paintList(); };
-  const KIND = { leitura: 'vídeo da leitura', resumo: 'vídeo resumo' };
-  const KIND_HINT = { leitura: 'O PDF acompanhado, com o trecho lido em destaque', resumo: 'Só os trechos principais do capítulo, narrados (seleção automática, sem reescrever)' };
+  const KIND = { leitura: 'vídeo da leitura', resumo: 'vídeo resumo', aula: 'vídeo-aula' };
+  const KIND_HINT = { leitura: 'O PDF acompanhado, com o trecho lido em destaque', resumo: 'Só os trechos principais do capítulo, narrados (seleção automática, sem reescrever)', aula: 'Aula educacional gerada por IA: tópicos que aparecem junto da explicação, resumo e perguntas com resposta. O texto do capítulo é enviado ao provedor de LLM configurado.' };
   function videoLines(c) {
     return Object.entries(c.videos || {}).filter(([, v]) => v.status === 'queued' || v.status === 'running').map(([k, v]) =>
       h('div', { class: 'hint', style: 'margin-top:6px' }, `Gerando ${KIND[k]}… ${Math.round((v.progress || 0) * 100)}%`,
@@ -762,7 +763,7 @@ async function viewBook(id) {
   function videoMenu(c) {
     const close = (e) => e.currentTarget.closest('details').removeAttribute('open');
     const items = [];
-    for (const kind of ['leitura', 'resumo']) {
+    for (const kind of ['leitura', 'resumo', 'aula']) {
       const v = (c.videos || {})[kind];
       if (v && (v.status === 'queued' || v.status === 'running')) {
         items.push(h('div', { class: 'hint', style: 'padding:8px 12px' }, `Gerando ${KIND[kind]}… ${Math.round((v.progress || 0) * 100)}%`));
@@ -770,6 +771,9 @@ async function viewBook(id) {
         items.push(h('button', { onclick: (e) => { close(e); watchVideo(c, kind); } }, ic('play', 18), `Assistir ${KIND[kind]}`),
           h('a', { href: `/api/books/${id}/chapters/${c.index}/video/${kind}?download=1`, download: '' }, ic('download', 18), `Baixar ${KIND[kind]}`),
           h('button', { class: 'danger', onclick: (e) => { close(e); removeVideo(c.index, kind); } }, ic('trash', 18), `Excluir ${KIND[kind]}`));
+      } else if (kind === 'aula' && !caps.llm) {
+        items.push(h('div', { class: 'hint', style: 'padding:8px 12px' }, 'Vídeo-aula indisponível: configure OPENCODE_API_KEY (ou LLM_API_KEY) no .env e reinicie o servidor.'));
+        continue;
       } else {
         if (v && v.error) items.push(h('div', { class: 'err hint', style: 'padding:8px 12px;color:var(--err)' }, v.error));
         items.push(h('button', { title: KIND_HINT[kind], onclick: (e) => { close(e); requestVideo(c.index, kind); } }, ic('video', 18), `${v ? 'Tentar de novo: ' : 'Gerar '}${KIND[kind]}`));

@@ -69,7 +69,8 @@ def _frame(src: pymupdf.Document, seg: dict, book_title: str, label: str, frac: 
 
 
 def build_video(pdf_path: Path, audio_path: Path, out_path: Path, *, book_title: str, label: str,
-                segments: list[dict], on_progress: Callable[[float], None] | None = None) -> float:
+                segments: list[dict], on_progress: Callable[[float], None] | None = None,
+                frame_fn: Callable | None = None) -> float:
     """Gera o MP4 (H.264 + AAC, 1280x720). Retorna a duração em segundos."""
     pdf_path, audio_path, out_path = Path(pdf_path).resolve(), Path(audio_path).resolve(), Path(out_path).resolve()
     audio_dur = duration_of(audio_path) or sum(s["d"] for s in segments)
@@ -84,7 +85,7 @@ def build_video(pdf_path: Path, audio_path: Path, out_path: Path, *, book_title:
         lines, elapsed = [], 0.0
         for i, s in enumerate(segs):
             png = work / f"{i:05d}.png"
-            _frame(src, s, book_title, label, elapsed / max(audio_dur, 1), png)
+            (frame_fn or _frame)(src, s, book_title, label, elapsed / max(audio_dur, 1), png)
             lines += [f"file '{png}'", f"duration {s['d']:.3f}"]
             elapsed += s["d"]
             if on_progress:

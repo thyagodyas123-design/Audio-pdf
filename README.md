@@ -15,6 +15,9 @@ Documentação: [`docs/requisitos.md`](docs/requisitos.md) · decisões pendente
 - **Vídeos por capítulo** (menu de vídeo em cada capítulo pronto): *vídeo da leitura* (PDF com o trecho lido em destaque + texto + áudio, MP4 1280×720) e
   *vídeo resumo* (resumo extrativo: seleciona e narra os trechos mais representativos, sem reescrever). Gerados em segundo plano, com
   progresso; assistir no app ou baixar.
+- **Vídeo-aula** (formato educacional): um LLM escreve o roteiro do capítulo (cenas com tópicos, explicação, resumo e 3 perguntas com resposta),
+  que é narrado e montado em vídeo com os tópicos aparecendo junto da fala e a página do PDF de origem em destaque. Exige `OPENCODE_API_KEY`
+  (ou `LLM_API_KEY` + `LLM_BASE_URL`) no `.env`; o texto do capítulo é enviado ao provedor. O roteiro fica em cache (`NN.aula.json`).
 - TTS local **Kokoro** (GPU Apple/MPS se disponível); tradução local **Argos** (pt ↔ en). Azure TTS como adapter opcional.
 - OCR (Tesseract) das páginas sem texto; pausas por parágrafo na narração.
 - Tradutores: Argos (local), DeepL e Claude (precisam de `DEEPL_API_KEY` / `ANTHROPIC_API_KEY`).
@@ -53,6 +56,9 @@ src/audiopdf/
   clean.py      cabeçalhos/rodapés, nº de página, hifenização, parágrafos
   chapters.py   capítulos por bookmarks (nível 2 sob "Partes"), pula copyright/sumário/índice
   chunk.py      trechos por frase para o limite do TTS
+  llm.py        cliente de chat compatível com OpenAI (retry/backoff, erros claros)
+  lesson.py     roteiro de aula por LLM (cenas, resumo, perguntas) com validação
+  lesson_video.py quadros e montagem do vídeo-aula
   summarize.py  resumo extrativo (parágrafos mais representativos)
   video.py      quadros (PyMuPDF) + ffmpeg → MP4 da leitura acompanhada
   align.py      parágrafo narrado → região do PDF (destaque) e linha do tempo estimada

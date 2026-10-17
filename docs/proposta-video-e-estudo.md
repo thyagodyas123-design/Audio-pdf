@@ -8,7 +8,10 @@ Para cada capítulo: quadros = página do PDF com o parágrafo em destaque, dura
 `ffmpeg` (concat demuxer) monta o MP4. Entrada: `NN.timeline.json` + `pages/` + `align.json`. Estimativa: poucos minutos por capítulo.
 Limite: mostra o PDF, não "explica" o conteúdo (não cria diagramas nem exemplos novos).
 
-## 2. Vídeo explicativo (exige LLM)
+## 2. Vídeo explicativo (exige LLM) — IMPLEMENTADO como "vídeo-aula"
+Roteiro por LLM em blocos de ~5,5 mil caracteres (até 14 cenas) + introdução, resumo e 3 perguntas; JSON validado, uma nova tentativa se inválido.
+O LLM só vê o texto do capítulo e devolve a referência dos parágrafos que sustentam cada cena (usados para destacar o PDF).
+Pendente: validar a qualidade com um LLM real (a conta usada nos testes estava sem créditos).
 Roteiro por capítulo (resumo em blocos), slides gerados (HTML → imagens) e narração do roteiro, não do texto integral.
 Depende de um modelo de linguagem: Claude via API (`ANTHROPIC_API_KEY`) ou modelo local. Sem chave, não dá para validar a qualidade.
 

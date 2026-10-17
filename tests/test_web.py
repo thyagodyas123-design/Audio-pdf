@@ -1,4 +1,5 @@
 import io
+import json
 import shutil
 import time
 import zipfile
@@ -254,4 +255,74 @@ def test_video_reading_and_summary_flow(client):
     # trocar a voz refaz o áudio e descarta os vídeos que dependiam dele
     client.post(f"/api/books/{bid}/jobs", json={"chapters": [1], "voice": "pm_alex"})
     wait_done(client, bid, {1})
+    assert client.get(f"/api/books/{bid}/chapters/1/video/resumo").status_code == 404
+
+
+class FakeLLM:
+    model = "fake-llm"
+    calls = 0
+
+    def chat(self, system, user, max_tokens=0, temperature=0):
+        import re
+        FakeLLM.calls += 1
+        if "Section" in user:
+            nums = re.findall(r"\[(\d+)\]", user)
+            return json.dumps({"title": "Cena de teste", "bullets": ["ponto um", "ponto dois", "ponto três"],
+                               "narration": "Esta é uma explicação de teste bem longa para a cena. " * 3, "refs": [int(nums[0]), 999], "example": "um exemplo"})
+        return json.dumps({"intro": "Bem-vindo à aula de teste, vamos aprender.", "recap": ["r1", "r2"],
+                           "recap_narration": "Resumindo a aula de teste que fizemos aqui.", "quiz": [{"q": "P1?", "a": "R1"}, {"q": "P2?", "a": "R2"}]})
+
+
+def test_lesson_video_flow_caches_script_and_reports_llm_errors(client, monkeypatch):
+    from audiopdf.llm import LLMError
+    from audiopdf.web import app as web
+
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    assert client.get("/api/capabilities").json()["llm"] is False
+    monkeypatch.setenv("LLM_API_KEY", "x")
+    assert client.get("/api/capabilities").json()["llm"] is True
+
+    book = upload(client, make_pdf()).json()
+    bid = book["id"]
+    client.post(f"/api/books/{bid}/jobs", json={"chapters": [1], "voice": "pf_dora"})
+    wait_done(client, bid, {1})
+
+    # provedor sem créditos: o erro chega à interface com a mensagem original
+    def broke():
+        raise LLMError("sem créditos na conta (HTTP 402)")
+
+    monkeypatch.setattr(web, "LLM", broke)
+    assert client.post(f"/api/books/{bid}/chapters/1/video", json={"kind": "aula"}).status_code == 200
+    failed = wait_video(client, bid, 1, "aula")
+    assert failed["status"] == "failed" and "sem créditos" in failed["error"]
+
+    # com LLM: gera o vídeo e guarda o roteiro; gerar de novo não chama o LLM outra vez
+    monkeypatch.setattr(web, "LLM", lambda: FakeLLM())
+    FakeLLM.calls = 0
+    client.post(f"/api/books/{bid}/chapters/1/video", json={"kind": "aula"})
+    ok = wait_video(client, bid, 1, "aula", timeout=120)
+    assert ok["status"] == "done" and ok["duration"] > 5 and ok["model"] == "fake-llm", ok
+    first_calls = FakeLLM.calls
+    assert first_calls >= 2
+    lesson_file = web.DATA / "books" / bid / "01.aula.json"
+    assert json.loads(lesson_file.read_text())["scenes"][0]["refs"]
+    assert client.delete(f"/api/books/{bid}/chapters/1/video/aula").status_code == 200
+    assert lesson_file.exists()  # o roteiro (pago) é mantido
+    client.post(f"/api/books/{bid}/chapters/1/video", json={"kind": "aula"})
+    assert wait_video(client, bid, 1, "aula", timeout=120)["status"] == "done"
+    assert FakeLLM.calls == first_calls
+    assert client.get(f"/api/books/{bid}/chapters/1/video/aula").headers["content-type"] == "video/mp4"
+
+
+def test_deleting_one_video_kind_keeps_the_others(client):
+    book = upload(client, make_pdf()).json()
+    bid = book["id"]
+    client.post(f"/api/books/{bid}/jobs", json={"chapters": [1], "voice": "pf_dora"})
+    wait_done(client, bid, {1})
+    for kind in ("leitura", "resumo"):
+        client.post(f"/api/books/{bid}/chapters/1/video", json={"kind": kind})
+        assert wait_video(client, bid, 1, kind)["status"] == "done"
+    client.delete(f"/api/books/{bid}/chapters/1/video/resumo")
+    assert client.get(f"/api/books/{bid}/chapters/1/video/leitura").status_code == 200  # não foi apagado junto
     assert client.get(f"/api/books/{bid}/chapters/1/video/resumo").status_code == 404
