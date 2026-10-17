@@ -52,6 +52,12 @@ cp .env.example .env     # só necessário para o Azure TTS
 
 Ao converter para outro idioma, o modelo do par (~100 MB) é baixado na primeira vez.
 
+### IA local para a vídeo-aula (custo zero)
+Testado com o **Qwen 3 8B** no Ollama (Mac M4, 16 GB): ~6 GB de memória enquanto gera, ~5 min por capítulo de 27 mil caracteres (4 cenas),
+JSON válido na primeira tentativa em 10 de 10 chamadas. Instale o Ollama, rode `ollama pull qwen3:8b`, defina `LLM_BASE_URL=http://localhost:11434/v1` e
+`LESSON_MODEL=qwen3:8b` no `.env` e use `scripts/start-local.sh`. Não gere aulas com o modelo local ao mesmo tempo que converte o livro: as duas tarefas
+disputam o mesmo chip e a memória.
+
 ## Estrutura
 
 ```

@@ -63,7 +63,7 @@ class ScriptedLLM:
     def __init__(self, replies):
         self.replies, self.calls = list(replies), 0
 
-    def chat(self, system, user, max_tokens=0, temperature=0):
+    def chat(self, system, user, max_tokens=0, temperature=0, json_mode=False):
         self.calls += 1
         return self.replies.pop(0)
 
@@ -162,7 +162,7 @@ def test_budget_sends_only_selected_excerpts_with_original_numbers():
     prompts = []
 
     class Spy(ScriptedLLM):
-        def chat(self, system, user, max_tokens=0, temperature=0):
+        def chat(self, system, user, max_tokens=0, temperature=0, json_mode=False):
             prompts.append(user)
             return json.dumps(SCENE | {"refs": [int(__import__("re").findall(r"\[(\d+)\]", user)[0])]}) if "Section" in user else json.dumps(FINAL)
 
@@ -181,3 +181,25 @@ def test_local_servers_need_no_key(monkeypatch):
     assert llm_mod.configured() is True and LLM().key == "local"
     monkeypatch.setenv("LLM_BASE_URL", "https://api.exemplo.com/v1")
     assert llm_mod.configured() is False
+
+
+
+def test_extract_json_ignores_think_blocks_with_braces():
+    assert extract_json('<think>vou montar {"x": 1} primeiro</think>\n{"ok": true}') == {"ok": True}
+
+
+def test_qwen3_gets_no_think_and_local_servers_get_json_mode_and_never_a_remote_key():
+    seen = []
+
+    def handler(req):
+        seen.append(json.loads(req.content))
+        return _ok("{}")
+
+    llm = LLM(client=httpx.Client(transport=httpx.MockTransport(handler)), key="chave-remota", base_url="http://localhost:11434/v1", model="qwen3:8b")
+    assert llm.key == "local"  # a chave remota não é enviada ao servidor local
+    llm.chat("s", "u", json_mode=True)
+    assert seen[0]["messages"][1]["content"].endswith("/no_think") and seen[0]["response_format"] == {"type": "json_object"}
+    assert seen[0]["reasoning_effort"] == "none"
+    remote = LLM(client=httpx.Client(transport=httpx.MockTransport(handler)), key="k", base_url="https://api.exemplo.com/v1", model="outro")
+    remote.chat("s", "u", json_mode=True)
+    assert "response_format" not in seen[1] and "reasoning_effort" not in seen[1] and not seen[1]["messages"][1]["content"].endswith("/no_think")

@@ -262,7 +262,7 @@ class FakeLLM:
     model = "fake-llm"
     calls = 0
 
-    def chat(self, system, user, max_tokens=0, temperature=0):
+    def chat(self, system, user, max_tokens=0, temperature=0, json_mode=False):
         import re
         FakeLLM.calls += 1
         if "Section" in user:

@@ -99,7 +99,7 @@ def validate_final(obj: dict) -> dict:
 def _ask(llm: LLM, lang: str, prompt: str, check: Callable[[dict], dict], max_tokens: int) -> dict:
     last: Exception | None = None
     for _ in range(2):  # uma nova tentativa se o JSON vier inválido
-        text = llm.chat(SYSTEM.format(lang=lang), prompt, max_tokens=max_tokens)
+        text = llm.chat(SYSTEM.format(lang=lang), prompt, max_tokens=max_tokens, json_mode=True)
         try:
             return check(extract_json(text))
         except (ValueError, TypeError, KeyError) as e:
