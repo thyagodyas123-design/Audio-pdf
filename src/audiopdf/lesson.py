@@ -19,15 +19,16 @@ SYSTEM = (
 )
 SCENE_PROMPT = """Chapter: {title}
 Section {i} of {n}. The paragraphs are numbered in brackets.
-
+{covered}
 {body}
 
 Return this JSON:
 {{"title": "scene title, at most 8 words",
  "bullets": ["3 to 5 key points, each at most 14 words"],
- "narration": "70 to 130 words explaining this section the way a teacher speaks to a student: plain spoken sentences, no lists, no markdown, no symbols that are hard to read aloud",
+ "narration": "130 to 190 words explaining this section the way a teacher speaks to a student: define each key term, explain why it matters and how it works, plain spoken sentences, no lists, no markdown, no symbols that are hard to read aloud. Do not start with 'In this chapter' or 'In this section'",
  "refs": [numbers of the 1 to 3 paragraphs that best support this scene],
- "example": "one short concrete example from the text (at most 25 words) or null"}}"""
+ "example": "one short concrete example from the text (at most 25 words) or null"}}
+Cover only what THIS section says; do not repeat points already covered by earlier scenes."""
 FINAL_PROMPT = """Chapter: {title}
 Scenes of the lesson:
 {scenes}
@@ -78,7 +79,7 @@ def _list(v: object, lo: int, hi: int, n: int) -> list[str]:
 
 def validate_scene(obj: dict, valid_refs: list[int]) -> dict:
     refs = [r for r in (obj.get("refs") or []) if isinstance(r, int) and r in valid_refs][:3]
-    narration = _clip(obj.get("narration"), 1100)
+    narration = _clip(obj.get("narration"), 1500)
     if len(narration) < 40:
         raise ValueError("narração curta demais")
     ex = obj.get("example")
@@ -123,7 +124,9 @@ def build_lesson(llm: LLM, title: str, paragraphs: list[str], lang_code: str = "
     scenes = []
     for k, idxs in enumerate(groups):
         body = "\n\n".join(f"[{i}] {by_id[i]}" for i in idxs)
-        prompt = SCENE_PROMPT.format(title=title, i=k + 1, n=len(groups), body=body)
+        covered = ("Earlier scenes already covered (do not repeat them, build on them): "
+                   + "; ".join(s["title"] for s in scenes) + "\n") if scenes else ""
+        prompt = SCENE_PROMPT.format(title=title, i=k + 1, n=len(groups), body=body, covered=covered)
         scenes.append(_ask(llm, lang, prompt, lambda o, v=idxs: validate_scene(o, v), 1500))
         if on_progress:
             on_progress((k + 1) / (len(groups) + 1))
