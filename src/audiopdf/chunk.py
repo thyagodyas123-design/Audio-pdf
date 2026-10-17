@@ -40,3 +40,17 @@ def chunk_paragraphs(text: str, max_chars: int = 1000, early_max: int = 350, ear
         pieces = [c for c in chunk_text(para, early_max if len(out) < early_n else max_chars) if re.search(r"\w", c)]
         out.extend((piece, j == len(pieces) - 1) for j, piece in enumerate(pieces))
     return out
+
+
+def split_paragraphs(text: str) -> list[str]:
+    """Parágrafos não vazios, na mesma ordem usada para narrar e para alinhar com o PDF."""
+    return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+
+
+def chunk_indexed(text: str, max_chars: int = 1000, early_max: int = 350, early_n: int = 2) -> list[tuple[str, bool, int]]:
+    """Como chunk_paragraphs, mas devolve também o índice do parágrafo de origem (0 = primeiro parágrafo de `text`)."""
+    out: list[tuple[str, bool, int]] = []
+    for pi, para in enumerate(split_paragraphs(text)):
+        pieces = [c for c in chunk_text(para, early_max if len(out) < early_n else max_chars) if re.search(r"\w", c)]
+        out.extend((piece, j == len(pieces) - 1, pi) for j, piece in enumerate(pieces))
+    return out

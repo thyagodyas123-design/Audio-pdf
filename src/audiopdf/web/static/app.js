@@ -25,6 +25,9 @@ const ICONS = {
   more: '<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>',
   alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.1"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/>',
+  book: '<path d="M12 6.5C10.5 5 8 4.5 4.5 4.5v13c3.5 0 6 .5 7.5 2 1.5-1.5 4-2 7.5-2v-13c-3.5 0-6 .5-7.5 2zM12 6.5v13"/>',
+  chevl: '<path d="M14.5 6l-6 6 6 6"/>',
+  chevr: '<path d="M9.5 6l6 6-6 6"/>',
 };
 function ic(name, size = 20) {
   const s = document.createElement('span');
@@ -223,6 +226,7 @@ const P = {
   },
   fit() { document.documentElement.style.setProperty('--player-h', this.bar.classList.contains('on') ? `${this.bar.offsetHeight}px` : '0px'); },
   close() {
+    if (R.isOpen) R.hide();
     this.a.pause(); this.a.removeAttribute('src'); this.meta = null; this.idx = null; this.live = null; this.waiting = false;
     this.setSleep(null); clearTimeout(this.pollT);
     this.bar.classList.remove('on'); this.fit();
@@ -267,6 +271,7 @@ const P = {
       s.value = v; s.style.background = `linear-gradient(to right, var(--accent) ${v / 10}%, var(--line) ${v / 10}%)`;
     }
     this.save();
+    if (R.isOpen && R.data) R.tick();
   },
   session() {
     if (!('mediaSession' in navigator) || !this.meta) return;
@@ -313,6 +318,128 @@ const P = {
   });
   window.addEventListener('beforeunload', () => P.save(true));
 })();
+
+// ---------- leitor sincronizado: acompanha o PDF enquanto o áudio toca ----------
+const R = {
+  el: $('#reader'), isOpen: false, follow: true, tab: 'pdf', data: null, key: '', cur: -2, page: 1, loading: false,
+  pageBox: null, textBox: null, pageLabel: null,
+  toggle() { this.isOpen ? this.hide() : this.show(); },
+  show() {
+    if (!P.meta) { toast('Toque um capítulo primeiro.'); return; }
+    this.isOpen = true; this.el.hidden = false; $('#pl-reader').setAttribute('aria-pressed', 'true');
+    requestAnimationFrame(() => { this.el.classList.add('on'); document.body.classList.add('reader-open'); });
+    this.sync(true);
+  },
+  hide() {
+    this.isOpen = false; this.el.classList.remove('on'); document.body.classList.remove('reader-open');
+    $('#pl-reader').setAttribute('aria-pressed', 'false');
+    setTimeout(() => { if (!this.isOpen) this.el.hidden = true; }, 350);
+  },
+  chapterIdx() { return P.live && P.live.idx != null ? P.live.idx : P.idx; },
+  async sync(force = false) {
+    if (!this.isOpen || !P.meta) return;
+    const idx = this.chapterIdx();
+    if (!idx || idx < 1) return;
+    const key = `${P.meta.id}:${idx}`;
+    const stale = this.data && P.live && P.live.part >= this.data.timeline.length;
+    if (!force && key === this.key && !stale) return;
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      this.data = await api(`/api/books/${P.meta.id}/chapters/${idx}/sync`);
+      this.key = key; this.cur = -2;
+      this.render();
+      this.tick(true);
+    } catch (e) { toast(e.message, 'err'); } finally { this.loading = false; }
+  },
+  pIndex() {
+    const tl = this.data.timeline;
+    if (!tl.length || (P.live && P.live.part < 0)) return -2;
+    if (P.live) return tl[Math.min(P.live.part, tl.length - 1)].p;
+    const t = P.a.currentTime;
+    let lo = 0, hi = tl.length - 1, i = 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (tl[m].t <= t) { i = m; lo = m + 1; } else hi = m - 1; }
+    return tl[i].p;
+  },
+  tick(force = false) {
+    const p = this.pIndex();
+    if (p === this.cur && !force) return;
+    this.cur = p;
+    const para = this.data.paragraphs[Math.max(p, 0)];
+    const pg = para && para.rects[0] ? para.rects[0][0] : null;
+    if (this.follow && pg && pg !== this.page) this.showPage(pg); else this.paintHl();
+    for (const el of this.textBox ? this.textBox.children : []) el.classList.toggle('now', Number(el.dataset.i) === p);
+    if (this.follow && this.tab === 'text' && p >= 0) this.textBox.children[p]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  },
+  seekPara(i) {
+    const tl = this.data.timeline;
+    const k = tl.findIndex((e) => e.p === i);
+    if (k < 0) { toast('Esse trecho ainda não tem marcação de tempo.'); return; }
+    if (P.live) { if (k < (P.chapter(P.live.idx)?.parts ?? 0)) P.startPart(P.live.idx, k); else toast('Esse trecho ainda está sendo convertido.'); return; }
+    P.a.currentTime = tl[k].t + 0.01;
+    P.a.play().catch(() => {});
+  },
+  showPage(n) {
+    this.page = Math.max(1, Math.min(n, this.data.pages));
+    if (!this.pageBox) return;
+    const box = this.pageBox;
+    const img = h('img', { alt: `Página ${this.page} do PDF`, src: `/api/books/${P.meta.id}/pages/${this.page}?w=1000` });
+    img.addEventListener('load', () => box.style.setProperty('--ar', img.naturalWidth / img.naturalHeight));
+    box.replaceChildren(img);
+    this.data.paragraphs.forEach((para, i) => {
+      for (const [pg, x0, y0, x1, y1] of para.rects) {
+        if (pg !== this.page) continue;
+        box.append(h('div', { class: 'hit', title: 'Ouvir a partir daqui', style: `left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%`, onclick: () => this.seekPara(i) }));
+      }
+    });
+    if (this.pageLabel) this.pageLabel.textContent = `Página ${this.page} de ${this.data.pages}`;
+    this.paintHl();
+    if (this.page < this.data.pages) new Image().src = `/api/books/${P.meta.id}/pages/${this.page + 1}?w=1000`;
+  },
+  paintHl() {
+    if (!this.pageBox) return;
+    this.pageBox.querySelectorAll('.hl').forEach((e) => e.remove());
+    const para = this.cur >= 0 ? this.data.paragraphs[this.cur] : null;
+    for (const [pg, x0, y0, x1, y1] of para ? para.rects : []) {
+      if (pg === this.page) this.pageBox.append(h('div', { class: 'hl', style: `left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%` }));
+    }
+  },
+  render() {
+    const d = this.data, c = P.chapter(this.chapterIdx());
+    const tabBtn = (id, label) => h('button', { role: 'tab', 'aria-selected': String(this.tab === id), onclick: () => { this.tab = id; this.render(); this.tick(true); } }, label);
+    const follow = h('button', { class: 'btn sm', 'aria-pressed': String(this.follow), title: 'Virar a página e rolar o texto sozinho', onclick: () => { this.follow = !this.follow; this.render(); this.tick(true); } }, this.follow ? 'Seguindo a leitura' : 'Seguir a leitura');
+    const notes = [];
+    if (d.approx) notes.push(h('span', { class: 'chip warn' }, 'Sincronia aproximada (áudio anterior à marcação)'));
+    if (d.translated) notes.push(h('span', { class: 'chip idle' }, 'Texto traduzido; o PDF está no idioma original'));
+    if (!d.paragraphs.some((p) => p.rects.length)) notes.push(h('span', { class: 'chip warn' }, 'Não foi possível localizar o texto no PDF'));
+    this.pageBox = null; this.textBox = null; this.pageLabel = null;
+    const body = h('div', { class: 'rd-body' });
+    if (this.tab === 'pdf') {
+      this.pageBox = h('div', { class: 'pg' });
+      body.append(this.pageBox);
+    } else {
+      this.textBox = h('div', {}, d.paragraphs.map((p, i) => h('p', { class: 'rd-p', 'data-i': i, onclick: () => this.seekPara(i) }, p.text)));
+      body.append(this.textBox);
+    }
+    const nav = this.tab === 'pdf' ? (() => {
+      this.pageLabel = h('span', { class: 'num grow' }, `Página ${this.page} de ${d.pages}`);
+      return h('div', { class: 'rd-sub' },
+        h('button', { class: 'btn icon sm', 'aria-label': 'Página anterior', onclick: () => { this.follow = false; this.showPage(this.page - 1); this.render(); this.tick(true); } }, ic('chevl', 18)),
+        this.pageLabel,
+        h('button', { class: 'btn icon sm', 'aria-label': 'Próxima página', onclick: () => { this.follow = false; this.showPage(this.page + 1); this.render(); this.tick(true); } }, ic('chevr', 18)));
+    })() : null;
+    this.el.replaceChildren(
+      h('div', { class: 'rd-head' }, h('h2', {}, c ? `Cap. ${c.index} · ${c.title}` : 'Acompanhar leitura'),
+        h('div', { class: 'tabs', role: 'tablist' }, tabBtn('pdf', 'PDF'), tabBtn('text', 'Texto')), follow,
+        h('button', { class: 'btn icon sm ghost', 'aria-label': 'Fechar leitor', onclick: () => this.hide() }, ic('x', 18))),
+      ...(notes.length ? [h('div', { class: 'rd-sub' }, ...notes)] : []), ...(nav ? [nav] : []), body);
+    if (this.tab === 'pdf') this.showPage(this.page);
+  },
+};
+$('#pl-reader').replaceChildren(ic('book', 18), 'Acompanhar');
+$('#pl-reader').onclick = () => R.toggle();
+P.subs.add(() => R.sync());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && R.isOpen && !e.target.closest('dialog')) R.hide(); });
 
 // ---------- roteador ----------
 let cleanup = null;

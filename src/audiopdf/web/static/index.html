@@ -41,6 +41,7 @@
     </div>
     <div class="mob-ctl" id="pl-mob"></div>
     <div class="aux">
+      <button class="btn ghost" id="pl-reader" aria-label="Acompanhar leitura no PDF" aria-pressed="false" title="Acompanhar no PDF"></button>
       <button class="btn ghost" id="pl-rate" aria-label="Velocidade de reprodução" title="Velocidade">1x</button>
       <button class="btn ghost" id="pl-sleep" aria-label="Timer de sono" title="Timer de sono"></button>
       <button class="btn icon ghost" id="pl-close" aria-label="Fechar player" title="Fechar"></button>
@@ -48,6 +49,8 @@
   </div>
   <audio id="audio" preload="auto"></audio>
 </section>
+
+<aside id="reader" aria-label="Acompanhar leitura no PDF" hidden></aside>
 
 <div id="toasts" role="status" aria-live="polite"></div>
 <script src="app.js"></script>

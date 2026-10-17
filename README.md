@@ -9,6 +9,9 @@ Documentação: [`docs/requisitos.md`](docs/requisitos.md) · decisões pendente
 - App local (FastAPI + HTML/CSS/JS sem build): upload com progresso, escolha de capítulos/idioma/voz, fila, linha do tempo
   do livro, **player fixo** que continua ao navegar (toca enquanto converte, retoma de onde parou, timer de sono,
   teclas espaço/←/→, controles do sistema), pré-busca do próximo capítulo e download (ZIP ou por capítulo). Claro/escuro automático.
+- **Leitura sincronizada** (branch `feature/leitura-sincronizada`): botão "Acompanhar" no player abre o PDF com o parágrafo lido
+  em destaque (vira a página sozinho), aba de texto (traduzido, se for o caso) e clique no PDF/texto para ouvir dali.
+  Capítulos novos têm marcação exata por trecho; áudios anteriores usam uma estimativa (erro típico ~1 s).
 - TTS local **Kokoro** (GPU Apple/MPS se disponível); tradução local **Argos** (pt ↔ en). Azure TTS como adapter opcional.
 - OCR (Tesseract) das páginas sem texto; pausas por parágrafo na narração.
 - Tradutores: Argos (local), DeepL e Claude (precisam de `DEEPL_API_KEY` / `ANTHROPIC_API_KEY`).
@@ -47,6 +50,7 @@ src/audiopdf/
   clean.py      cabeçalhos/rodapés, nº de página, hifenização, parágrafos
   chapters.py   capítulos por bookmarks (nível 2 sob "Partes"), pula copyright/sumário/índice
   chunk.py      trechos por frase para o limite do TTS
+  align.py      parágrafo narrado → região do PDF (destaque) e linha do tempo estimada
   lang.py       detecção de idioma (lingua-py)
   translate/    adapter + Argos (local)
   tts/          adapter: kokoro (local), azure

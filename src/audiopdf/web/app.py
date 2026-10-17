@@ -13,15 +13,17 @@ import uuid
 import zipfile
 from pathlib import Path
 
+import pymupdf
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
+from ..align import estimate_timeline, locate_paragraphs
 from ..audio import concat_normalize, duration_of, to_mp3
 from ..chapters import split_chapters
-from ..chunk import chunk_paragraphs
+from ..chunk import chunk_indexed, split_paragraphs
 from ..clean import clean_pages
 from ..extract import extract
 from ..lang import detect
@@ -145,18 +147,26 @@ def _synth_chapter(d: Path, book_id: str, idx: int, texts: list, tts, voice: str
                    src: str | None, tgt: str, translator: str = "argos") -> None:
     title, body = _chapter_text(d, book_id, idx, texts, src, tgt, translator)
     _update_chapter(book_id, idx, status="running", progress=0, parts=0, error=None)
-    chunks = chunk_paragraphs(f"{title}.\n\n{body}", tts.max_chars)
+    chunks = chunk_indexed(f"{title}.\n\n{body}", tts.max_chars)
     parts_dir = d / f"{idx:02d}.parts"
     shutil.rmtree(parts_dir, ignore_errors=True)
     parts_dir.mkdir()
     audio_parts = []
-    for i, (ch, para_end) in enumerate(chunks):
+    timeline: list[dict] = []
+    t = 0.0
+    tl_file = d / f"{idx:02d}.timeline.json"
+    tl_file.unlink(missing_ok=True)
+    for i, (ch, para_end, pi) in enumerate(chunks):
         if book_id in _cancel:
             raise InterruptedError
         pause = 1.0 if i == 0 else (0.7 if para_end else 0.25)  # título > parágrafo > frase longa
         data = tts.synthesize(ch, voice, speed, pause_s=pause)
         audio_parts.append(data)
         to_mp3(data, tts.audio_ext, parts_dir / f"{i:04d}.mp3")
+        dur = duration_of(parts_dir / f"{i:04d}.mp3") or 0.0
+        timeline.append({"t": round(t, 2), "d": round(dur, 2), "p": pi - 1})  # p = -1: título; 0.. = parágrafos
+        t += dur
+        tl_file.write_text(json.dumps(timeline))  # parcial: o player acompanha mesmo durante a conversão
         _update_chapter(book_id, idx, progress=round((i + 1) / len(chunks), 3), parts=i + 1)
     concat_normalize(audio_parts, d / f"{idx:02d}.mp3", ext=tts.audio_ext)
 
@@ -299,7 +309,36 @@ def _analyze(pdf: Path, title: str):
 
 
 def _chapter_meta(c) -> dict:
-    return {"index": c.index, "title": c.title, "chars": len(c.text), "status": "idle", "progress": 0, "error": None}
+    return {"index": c.index, "title": c.title, "chars": len(c.text), "status": "idle", "progress": 0, "error": None,
+            "page_start": c.page_start, "page_end": c.page_end}
+
+
+def _write_align(d: Path, chapters) -> None:
+    """Mapeia cada parágrafo de cada capítulo para regiões do PDF (align.json). Falha não impede o livro."""
+    try:
+        doc = pymupdf.open(d / "source.pdf")
+        out = {str(c.index): locate_paragraphs(doc, c.page_start, c.page_end, split_paragraphs(c.text)) for c in chapters}
+        (d / "align.json").write_text(json.dumps(out))
+    except Exception:
+        log.warning("alinhamento com o PDF falhou", exc_info=True)
+
+
+def _align(book_id: str) -> dict:
+    """align.json; livros anteriores a esta função são alinhados na primeira consulta."""
+    d = _dir(book_id)
+    f = d / "align.json"
+    if not f.exists():
+        meta = _load(book_id)
+        _, chapters = _analyze(d / "source.pdf", meta["title"])
+        texts = json.loads((d / "chapters.json").read_text())
+        for c in chapters:  # parágrafos do texto já narrado, faixa de páginas da análise atual
+            if c.index <= len(texts):
+                c.text = texts[c.index - 1]
+        _write_align(d, chapters)
+    try:
+        return json.loads(f.read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 @app.post("/api/books")
@@ -322,6 +361,7 @@ def upload(file: UploadFile = File(...)):  # noqa: B008
         title = Path(file.filename or "livro").stem
         content, chapters = _analyze(pdf, title)
         (d / "chapters.json").write_text(json.dumps([c.text for c in chapters], ensure_ascii=False))
+        _write_align(d, chapters)
         meta = {
             "id": book_id, "title": title, "pages": len(content.pages),
             "language": detect(" ".join(c.text[:2000] for c in chapters[:6])),
@@ -354,6 +394,9 @@ def reanalyze(book_id: str):
                 m.update({k: o[k] for k in ("status", "progress", "voice", "speed", "lang", "parts", "translator") if k in o})
             new.append(m)
         (d / "chapters.json").write_text(json.dumps([c.text for c in chapters], ensure_ascii=False))
+        for tl in d.glob("*.timeline.json"):  # o texto mudou: marcações antigas não valem
+            tl.unlink()
+        _write_align(d, chapters)
         shutil.rmtree(d / "translated", ignore_errors=True)  # o texto mudou: traduções antigas não valem
         meta.update(chapters=new, pages=len(content.pages), scanned_pages=len(content.scanned_pages),
                     ocr_pages=len(content.ocr_pages), language=detect(" ".join(c.text[:2000] for c in chapters[:6])))
@@ -456,6 +499,55 @@ def part_audio(book_id: str, index: int, part: int):
     if not f.exists():
         raise HTTPException(404, "trecho ainda não gerado")
     return FileResponse(f, media_type="audio/mpeg")
+
+
+@app.get("/api/books/{book_id}/chapters/{index}/sync")
+def chapter_sync(book_id: str, index: int):
+    """Dados para acompanhar o PDF enquanto o áudio toca: parágrafos (com regiões no PDF) e linha do tempo."""
+    d = _dir(book_id)
+    meta = _load(book_id)
+    c = next((x for x in meta["chapters"] if x["index"] == index), None)
+    if c is None:
+        raise HTTPException(404, "capítulo não encontrado")
+    texts = json.loads((d / "chapters.json").read_text())
+    src_paras = split_paragraphs(texts[index - 1])
+    shown, translated = src_paras, False
+    if c.get("lang") and c.get("translator") and meta.get("language") and meta["language"] != _base(c["lang"]):
+        f = d / "translated" / f"{c['translator']}-{_base(c['lang'])}" / f"{index:02d}.json"
+        if f.exists():
+            shown, translated = split_paragraphs(json.loads(f.read_text())["text"]), True
+    rects = _align(book_id).get(str(index), [])
+    n_src, n_shown = len(src_paras), len(shown)
+
+    def src_of(i: int) -> int:  # parágrafo traduzido -> parágrafo do PDF (índice, ou proporcional se a contagem difere)
+        return i if n_shown == n_src else min(n_src - 1, int(i * n_src / max(n_shown, 1)))
+
+    paragraphs = [{"text": shown[i], "rects": rects[src_of(i)] if src_of(i) < len(rects) else []} for i in range(n_shown)]
+    tl_file, approx = d / f"{index:02d}.timeline.json", False
+    if tl_file.exists():
+        timeline = json.loads(tl_file.read_text())
+    elif c["status"] == "done" and c.get("duration"):
+        timeline, approx = estimate_timeline(c["title"], shown, c["duration"]), True
+    else:
+        timeline = []
+    return {"timeline": timeline, "paragraphs": paragraphs, "translated": translated, "approx": approx, "pages": meta["pages"]}
+
+
+@app.get("/api/books/{book_id}/pages/{n}")
+def page_image(book_id: str, n: int, w: int = 1000):
+    """Página do PDF como JPEG (n começa em 1), com cache em disco."""
+    d = _dir(book_id)
+    w = max(400, min(w, 2000))
+    cache = d / "pages" / f"{n:04d}-{w}.jpg"
+    if not cache.exists():
+        doc = pymupdf.open(d / "source.pdf")
+        if n < 1 or n > len(doc):
+            raise HTTPException(404, "página inexistente")
+        page = doc[n - 1]
+        zoom = w / page.rect.width
+        cache.parent.mkdir(exist_ok=True)
+        page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).save(str(cache), jpg_quality=80)
+    return FileResponse(cache, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.post("/api/books/{book_id}/prefetch/{index}")

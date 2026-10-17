@@ -183,3 +183,40 @@ def test_reanalyze_keeps_done_audio_and_blocks_while_busy(client):
     chapters = r.json()["chapters"]
     assert chapters[0]["status"] == "done" and chapters[1]["status"] == "idle"
     assert client.get(f"/api/books/{book['id']}/audio/1").status_code == 200
+
+
+def test_sync_and_page_image_follow_along(client):
+    book = upload(client, make_pdf()).json()
+    assert book["chapters"][0]["page_start"] == 0 and book["chapters"][1]["page_start"] == 2
+    client.post(f"/api/books/{book['id']}/jobs", json={"chapters": [1], "voice": "pf_dora"})
+    wait_done(client, book["id"], {1})
+    sync = client.get(f"/api/books/{book['id']}/chapters/1/sync").json()
+    tl = sync["timeline"]
+    assert sync["approx"] is False and tl[0]["p"] == -1 and all(e["d"] > 0 for e in tl)
+    assert all(b["t"] >= a["t"] + a["d"] - 0.01 for a, b in zip(tl, tl[1:], strict=False))  # tempos encadeados
+    assert max(e["p"] for e in tl) == len(sync["paragraphs"]) - 1
+    assert all(p["rects"] and p["rects"][0][0] in (1, 2) for p in sync["paragraphs"])
+    img = client.get(f"/api/books/{book['id']}/pages/1")
+    assert img.status_code == 200 and img.headers["content-type"] == "image/jpeg" and img.content[:2] == b"\xff\xd8"
+    assert client.get(f"/api/books/{book['id']}/pages/99").status_code == 404
+    # sem marcação (áudio antigo): linha do tempo estimada, marcada como aproximada
+    from audiopdf.web import app as web
+    (web.DATA / "books" / book["id"] / "01.timeline.json").unlink()
+    approx = client.get(f"/api/books/{book['id']}/chapters/1/sync").json()
+    assert approx["approx"] is True and approx["timeline"][0]["p"] == -1
+    assert abs(approx["timeline"][-1]["t"] + approx["timeline"][-1]["d"] - sync_total(tl)) < 3
+
+
+def sync_total(tl):
+    return tl[-1]["t"] + tl[-1]["d"]
+
+
+def test_sync_translated_chapter_keeps_pdf_regions(client):
+    book = upload(client, make_pdf()).json()
+    client.post(f"/api/books/{book['id']}/jobs",
+                json={"chapters": [1], "voice": "af_heart", "target_language": "en-US"})
+    wait_done(client, book["id"], {1})
+    sync = client.get(f"/api/books/{book['id']}/chapters/1/sync").json()
+    assert sync["translated"] is True and sync["paragraphs"][0]["text"].startswith("[pt->en]")
+    assert all(p["rects"] for p in sync["paragraphs"])  # texto traduzido ↔ regiões do PDF original
+    assert sync["timeline"][0]["p"] == -1 and sync["approx"] is False
