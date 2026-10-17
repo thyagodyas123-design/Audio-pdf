@@ -50,8 +50,8 @@ def _fixture(tmp_path):
     return pdf, audio, paragraphs, timeline
 
 
-def test_segments_merge_consecutive_chunks_and_fill_missing_pages():
-    _, _, paragraphs, timeline = _fixture(__import__("pathlib").Path("."))  # só usa paragraphs/timeline
+def test_segments_merge_consecutive_chunks_and_fill_missing_pages(tmp_path):
+    _, _, paragraphs, timeline = _fixture(tmp_path)
     segs = segments_from_timeline(timeline, paragraphs, "Capítulo X", page_start=0)
     assert [s["p"] for s in segs] == [-1, 0, 1] and segs[1]["d"] == 3.0
     assert segs[0]["title"] and segs[0]["text"] == "Capítulo X" and segs[0]["page"] == 1  # título usa a 1ª página conhecida
