@@ -7,7 +7,38 @@ services:
       - "8000:8000"
     volumes:
       - audiopdf-data:/data
+    environment:
+      - AUDIOPDF_DATA=/data
+      - TTS_PROVIDER=kokoro
+      - KOKORO_DEVICE=cpu
+      - HF_HOME=/data/.cache/huggingface
+      - HOST=0.0.0.0
+      - PORT=8000
+      - FORWARDED_ALLOW_IPS=*
+      - OCR_LANG=por+eng
+      - OCR_MAX_PAGES=150
+      - DATABASE_URL=postgresql+psycopg://audiopdf:audiopdf@db:5432/audiopdf
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: audiopdf-db
+    environment:
+      - POSTGRES_USER=audiopdf
+      - POSTGRES_PASSWORD=audiopdf
+      - POSTGRES_DB=audiopdf
+    volumes:
+      - audiopdf-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audiopdf -d audiopdf"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:
   audiopdf-data:
+  audiopdf-db:
