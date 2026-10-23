@@ -2,15 +2,17 @@ services:
   audiopdf:
     build: .
     image: audiopdf:local
-    container_name: audiopdf
-    ports:
-      - "8000:8000"
+    # Sem "ports:": no Dokploy o Traefik roteia pelo domínio até a porta interna.
+    # Publicar 8000 no host conflita com qualquer outro serviço usando essa porta.
+    # Para rodar localmente sem Dokploy, adicione temporariamente "ports: ['8000:8000']".
+    expose:
+      - "8000"
     volumes:
       - audiopdf-data:/data
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+psycopg://audiopdf:audiopdf@db:5432/audiopdf
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-audiopdf}:${POSTGRES_PASSWORD:-audiopdf}@db:5432/${POSTGRES_DB:-audiopdf}
     depends_on:
       db:
         condition: service_healthy
@@ -18,9 +20,6 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: audiopdf-db
-    env_file:
-      - .env
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-audiopdf}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-audiopdf}
@@ -28,7 +27,7 @@ services:
     volumes:
       - audiopdf-db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-audiopdf} -d ${POSTGRES_DB:-audiopdf}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
