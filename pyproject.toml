@@ -1,28 +1,47 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "audiopdf"
 version = "0.0.1"
-description = "PDF -> audiobook (Fase 0: CLI, texto selecionável, sem tradução)"
 requires-python = ">=3.12"
 dependencies = [
-  "pymupdf>=1.24",
-  "azure-cognitiveservices-speech>=1.38",
-  "python-dotenv>=1.0",
+    "pymupdf>=1.24",
+    "azure-cognitiveservices-speech>=1.38",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
-web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9"]
-translate = ["argostranslate>=1.9", "lingua-language-detector>=2.0", "httpx>=0.27", "anthropic>=0.40"]
-kokoro = ["kokoro>=0.9", "soundfile>=0.12"]  # exige: brew install espeak-ng
-dev = ["pytest>=8", "ruff>=0.5"]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+]
+translate = [
+    "argostranslate>=1.9",
+    "lingua-language-detector>=2.0",
+    "httpx>=0.27",
+    "anthropic>=0.40",
+]
+kokoro = [
+    "kokoro>=0.9",
+    "soundfile>=0.12",
+]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+db = [
+    "psycopg[binary]>=3.1",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+]
 
 [project.scripts]
 audiopdf = "audiopdf.cli:main"
 audiopdf-web = "audiopdf.web.app:main"
 audiopdf-compare = "audiopdf.translate.compare:main"
-
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -32,10 +51,3 @@ testpaths = ["tests"]
 
 [tool.setuptools.package-data]
 "audiopdf.web" = ["static/*"]
-
-[project.optional-dependencies]
-db = [
-    "psycopg[binary]>=3.1",
-    "sqlalchemy>=2.0",
-    "alembic>=1.13",
-]
