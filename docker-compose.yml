@@ -1,0 +1,13 @@
+services:
+  audiopdf:
+    build: .
+    image: audiopdf:local
+    container_name: audiopdf
+    ports:
+      - "8000:8000"
+    volumes:
+      - audiopdf-data:/data
+    restart: unless-stopped
+
+volumes:
+  audiopdf-data:
