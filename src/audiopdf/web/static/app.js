@@ -29,6 +29,9 @@ const ICONS = {
   book: '<path d="M12 6.5C10.5 5 8 4.5 4.5 4.5v13c3.5 0 6 .5 7.5 2 1.5-1.5 4-2 7.5-2v-13c-3.5 0-6 .5-7.5 2zM12 6.5v13"/>',
   chevl: '<path d="M14.5 6l-6 6 6 6"/>',
   chevr: '<path d="M9.5 6l6 6-6 6"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/>',
+  out: '<path d="M10 5H6a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h4M15 8l4 4-4 4M19 12H9"/>',
+  edit: '<path d="M5 19l1-4L16.5 4.5a1.8 1.8 0 0 1 2.5 2.5L8.5 17.5z"/>',
 };
 function ic(name, size = 20) {
   const s = document.createElement('span');
@@ -54,11 +57,14 @@ async function api(url, opts) {
   if (!r.ok) {
     let d = r.statusText;
     try { d = (await r.json()).detail || d; } catch { /* corpo não JSON */ }
-    throw new Error(typeof d === 'string' ? d : 'Erro inesperado');
+    const err = new Error(typeof d === 'string' ? d : 'Erro inesperado');
+    err.status = r.status;
+    throw err;
   }
   return r.json();
 }
-const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+const send = (method) => (url, body) => api(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+const post = send('POST'), patch = send('PATCH');
 
 const pad2 = (n) => String(n).padStart(2, '0');
 function fmtDur(s) {
@@ -447,8 +453,9 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && R.isOpen
 // ---------- roteador ----------
 let cleanup = null;
 function setNav(w) {
-  for (const [id, k] of [['nav-lib', 'lib'], ['nav-new', 'new']]) {
+  for (const [id, k] of [['nav-lib', 'lib'], ['nav-new', 'new'], ['nav-users', 'users']]) {
     const el = $(`#${id}`);
+    if (!el) continue;
     if (k === w) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
   }
 }
@@ -815,16 +822,135 @@ async function viewBook(id) {
   if (metaBusy(meta)) timer = setTimeout(refresh, 2000);
 }
 
+// ---------- sessão e usuários ----------
+const session = { user: null };
+function renderUserbar() {
+  const u = session.user;
+  document.body.classList.toggle('anon', !u);
+  $('#userbar').replaceChildren(...(u ? [
+    h('span', { class: 'muted who' }, u.name),
+    u.role === 'admin' ? h('a', { class: 'btn ghost sm', href: '#/users', id: 'nav-users' }, ic('user', 18), 'Usuários') : null,
+    h('button', { class: 'btn ghost sm', onclick: changePasswordDialog }, 'Senha'),
+    h('button', { class: 'btn ghost sm', onclick: logout }, ic('out', 18), 'Sair'),
+  ] : []));
+}
+async function logout() {
+  try { await post('/api/auth/logout'); } catch { /* sessão já expirada */ }
+  location.hash = '#/'; location.reload();
+}
+function formDialog({ title, fields, ok = 'Salvar', onSubmit }) {
+  return new Promise((resolve) => {
+    const err = h('div', { class: 'notice err', role: 'alert', hidden: true });
+    const els = {};
+    const rows = fields.map((f) => {
+      const id = `f-${f.key}`;
+      if (f.type === 'checkbox') {
+        els[f.key] = h('input', { type: 'checkbox', id, checked: !!f.value });
+        return h('label', { class: 'check' }, els[f.key], f.label);
+      }
+      els[f.key] = f.type === 'select'
+        ? h('select', { id }, f.options.map(([v, l]) => h('option', { value: v, selected: v === f.value }, l)))
+        : h('input', { type: f.type || 'text', id, value: f.value ?? '', autocomplete: f.autocomplete || 'off', required: f.required, minlength: f.minlength });
+      return h('label', { class: 'field', for: id }, f.label, els[f.key], f.hint ? h('span', { class: 'hint' }, f.hint) : null);
+    });
+    const submit = h('button', { class: 'btn primary', type: 'submit' }, ok);
+    const dlg = h('dialog', { 'aria-label': title },
+      h('form', { class: 'stack', onsubmit: async (e) => {
+        e.preventDefault();
+        const vals = Object.fromEntries(fields.map((f) => [f.key, f.type === 'checkbox' ? els[f.key].checked : els[f.key].value]));
+        submit.disabled = true; err.hidden = true;
+        try { await onSubmit(vals); dlg.close('yes'); } catch (x) { err.hidden = false; err.replaceChildren(ic('alert', 18), x.message); submit.disabled = false; }
+      } }, h('h2', {}, title), err, ...rows,
+      h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close('no') }, 'Cancelar'), submit)));
+    dlg.addEventListener('close', () => { resolve(dlg.returnValue === 'yes'); dlg.remove(); });
+    document.body.append(dlg); dlg.showModal();
+  });
+}
+const changePasswordDialog = () => formDialog({
+  title: 'Trocar a minha senha', ok: 'Trocar',
+  fields: [
+    { key: 'current', label: 'Senha atual', type: 'password', required: true, autocomplete: 'current-password' },
+    { key: 'new', label: 'Nova senha', type: 'password', required: true, minlength: 8, autocomplete: 'new-password', hint: 'De 8 a 128 caracteres. Os outros dispositivos serão desconectados.' },
+  ],
+  onSubmit: async (v) => { await post('/api/auth/password', v); toast('Senha alterada.'); },
+});
+function viewLogin() {
+  document.title = 'Entrar · Audio-PDF';
+  const err = h('div', { class: 'notice err', role: 'alert', hidden: true });
+  const email = h('input', { type: 'email', id: 'lg-email', required: true, autocomplete: 'username' });
+  const pass = h('input', { type: 'password', id: 'lg-pass', required: true, autocomplete: 'current-password' });
+  const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Entrar');
+  $app.replaceChildren(h('form', { class: 'card login', onsubmit: async (e) => {
+    e.preventDefault(); btn.disabled = true; err.hidden = true;
+    try {
+      session.user = await post('/api/auth/login', { email: email.value, password: pass.value });
+      renderUserbar(); route();
+    } catch (x) { err.hidden = false; err.replaceChildren(ic('alert', 18), x.message); btn.disabled = false; pass.select(); }
+  } }, h('div', {}, h('h1', {}, 'Entrar'), h('p', { class: 'sub' }, 'Use a conta criada pelo administrador.')), err,
+  h('label', { class: 'field', for: 'lg-email' }, 'E-mail', email), h('label', { class: 'field', for: 'lg-pass' }, 'Senha', pass), btn));
+  email.focus();
+}
+const fmtWhen = (t) => (t ? new Date(t * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'nunca');
+async function viewUsers() {
+  if (session.user.role !== 'admin') { location.hash = '#/'; return; }
+  setNav('users'); document.title = 'Usuários · Audio-PDF';
+  const body = h('tbody');
+  const load = async () => {
+    const users = await api('/api/users');
+    body.replaceChildren(...users.map((u) => h('tr', {},
+      h('td', {}, h('strong', {}, u.name), h('div', { class: 'hint' }, u.email)),
+      h('td', {}, h('span', { class: `chip ${u.role === 'admin' ? '' : 'idle'}` }, u.role === 'admin' ? 'Administrador' : 'Usuário')),
+      h('td', {}, h('span', { class: `chip ${u.active ? '' : 'fail'}` }, u.active ? 'Ativo' : 'Desativado')),
+      h('td', { class: 'num' }, u.books),
+      h('td', { class: 'muted' }, fmtWhen(u.last_login)),
+      h('td', { class: 'acts' },
+        h('button', { class: 'btn icon sm ghost', 'aria-label': `Editar ${u.name}`, title: 'Editar', onclick: () => editUser(u) }, ic('edit', 18)),
+        h('button', { class: 'btn icon sm ghost', 'aria-label': `Excluir ${u.name}`, title: 'Excluir', onclick: () => removeUser(u) }, ic('trash', 18))))));
+  };
+  const editUser = async (u) => {
+    const roles = [['user', 'Usuário'], ['admin', 'Administrador']];
+    const done = await formDialog({
+      title: u ? 'Editar usuário' : 'Novo usuário', ok: u ? 'Salvar' : 'Criar',
+      fields: [
+        { key: 'name', label: 'Nome', value: u?.name, required: true },
+        { key: 'email', label: 'E-mail', type: 'email', value: u?.email, required: true },
+        { key: 'role', label: 'Perfil', type: 'select', options: roles, value: u?.role || 'user' },
+        ...(u ? [{ key: 'active', label: 'Conta ativa', type: 'checkbox', value: u.active }] : []),
+        { key: 'password', label: u ? 'Nova senha' : 'Senha', type: 'password', required: !u, minlength: 8, autocomplete: 'new-password', hint: u ? 'Deixe em branco para manter a atual. Trocar a senha desconecta o usuário.' : 'De 8 a 128 caracteres.' },
+      ],
+      onSubmit: async (v) => {
+        if (u) { await patch(`/api/users/${u.id}`, { ...v, password: v.password || undefined }); } else { await post('/api/users', v); }
+      },
+    });
+    if (done) { toast(u ? 'Usuário atualizado.' : 'Usuário criado.'); load().catch((e) => toast(e.message, 'err')); }
+  };
+  const removeUser = async (u) => {
+    if (!await confirmDialog({ title: `Excluir ${u.name}?`, body: u.books ? `Os ${u.books} livros dessa conta passam para você.` : 'A conta será removida.', ok: 'Excluir', danger: true })) return;
+    try { await api(`/api/users/${u.id}`, { method: 'DELETE' }); toast('Usuário excluído.'); await load(); } catch (e) { toast(e.message, 'err'); }
+  };
+  $app.replaceChildren(heading('Usuários', 'Só administradores criam e gerenciam contas.', h('button', { class: 'btn primary', onclick: () => editUser(null) }, ic('plus', 18), 'Novo usuário')),
+    h('div', { class: 'card tablewrap' }, h('table', { class: 'utable' },
+      h('thead', {}, h('tr', {}, ['Pessoa', 'Perfil', 'Situação', 'Livros', 'Último acesso', ''].map((t) => h('th', { scope: 'col' }, t)))), body)));
+  await load();
+}
+
 // ---------- rota ----------
 async function route() {
   if (cleanup) { cleanup(); cleanup = null; }
   const [, view, arg] = location.hash.split('/');
+  if (!session.user) {
+    try { session.user = await api('/api/auth/me'); } catch { session.user = null; }
+    renderUserbar();
+    if (!session.user) { viewLogin(); return; }
+  }
   try {
-    if (view === 'new') await viewNew();
+    if (view === 'users') await viewUsers();
+    else if (view === 'new') await viewNew();
     else if (view === 'book' && arg) await viewBook(arg);
     else if (view === 'convert' && arg) await viewConvert(arg);
     else await viewLibrary();
   } catch (e) {
+    if (e.status === 401) { session.user = null; renderUserbar(); viewLogin(); return; }
     $app.replaceChildren(h('div', { class: 'notice err', role: 'alert' }, ic('alert', 18), `Erro: ${e.message}`), h('a', { class: 'btn', href: '#/' }, 'Voltar à biblioteca'));
   }
   window.scrollTo({ top: 0 });

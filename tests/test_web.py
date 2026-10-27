@@ -49,7 +49,9 @@ def client():
 
     web._provider = lambda: FakeTTS()
     web.get_translator = lambda *_: FakeTranslator()
-    return TestClient(web.app)
+    c = TestClient(web.app)
+    assert c.post("/api/auth/login", json={"email": "admin@teste.com", "password": "senha-do-admin-1"}).status_code == 200
+    return c
 
 
 def make_pdf(chapters=2, pages_each=2) -> bytes:

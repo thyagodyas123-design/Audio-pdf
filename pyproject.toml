@@ -17,6 +17,10 @@ web = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "argon2-cffi>=23",
+    "psycopg[binary]>=3.1",
 ]
 translate = [
     "argostranslate>=1.9",
@@ -31,11 +35,6 @@ kokoro = [
 dev = [
     "pytest>=8",
     "ruff>=0.5",
-]
-db = [
-    "psycopg[binary]>=3.1",
-    "sqlalchemy>=2.0",
-    "alembic>=1.13",
 ]
 
 [project.scripts]

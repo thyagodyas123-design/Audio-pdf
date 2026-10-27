@@ -55,6 +55,3 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${PORT}/" > /dev/null || exit 1
 
 CMD ["audiopdf-web"]
-
-# DB deps
-RUN pip install psycopg[binary] sqlalchemy alembic

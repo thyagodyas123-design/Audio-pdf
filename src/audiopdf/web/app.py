@@ -1,4 +1,4 @@
-"""Fase A: app local (FastAPI + página estática). Um usuário, sem auth, só 127.0.0.1."""
+"""App web (FastAPI + página estática): login por cookie, livros por usuário."""
 import itertools
 import json
 import logging
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 import pymupdf
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -37,6 +37,7 @@ from ..summarize import select as select_summary
 from ..translate import available_translators, get_translator
 from ..tts import get_provider
 from ..video import build_video, segments_from_timeline
+from . import auth
 
 DATA = Path(os.environ.get("AUDIOPDF_DATA", "data")).resolve()
 MAX_BYTES = 200 * 1024 * 1024
@@ -61,7 +62,8 @@ def _base(code: str) -> str:
 
 
 log = logging.getLogger("audiopdf")
-app = FastAPI(title="Audio-PDF (local)")
+app = FastAPI(title="Audio-PDF", dependencies=[Depends(auth.guard)])
+app.include_router(auth.router)
 _lock = threading.Lock()
 # (prioridade, seq, livro, capítulos, voz, velocidade): 0 = pré-busca do próximo capítulo, 1 = fila normal
 _jobs: "queue.PriorityQueue" = queue.PriorityQueue()
@@ -307,11 +309,14 @@ def sample(voice_id: str):
 
 
 @app.get("/api/books")
-def list_books():
+def list_books(user: auth.CurrentUser):
     books = []
     root = DATA / "books"
+    mine = auth.visible_book_ids(user)
     if root.is_dir():
         for p in root.glob("*/meta.json"):
+            if mine is not None and p.parent.name not in mine:
+                continue
             _fill_durations(p.parent.name)
             books.append(_summary(json.loads(p.read_text())))
     return sorted(books, key=lambda b: b["created"], reverse=True)
@@ -364,7 +369,7 @@ def _align(book_id: str) -> dict:
 
 
 @app.post("/api/books")
-def upload(file: UploadFile = File(...)):  # noqa: B008
+def upload(user: auth.CurrentUser, file: UploadFile = File(...)):  # noqa: B008
     book_id = uuid.uuid4().hex
     d = DATA / "books" / book_id
     d.mkdir(parents=True)
@@ -391,6 +396,7 @@ def upload(file: UploadFile = File(...)):  # noqa: B008
             "created": time.time(), "chapters": [_chapter_meta(c) for c in chapters],
         }
         _save(book_id, meta)
+        auth.register_book(book_id, user["id"])
         return meta
     except Exception:
         shutil.rmtree(d, ignore_errors=True)
@@ -796,6 +802,7 @@ def download_zip(book_id: str):
 @app.delete("/api/books/{book_id}")
 def delete_book(book_id: str):
     shutil.rmtree(_dir(book_id))
+    auth.forget_book(book_id)
     return {"ok": True}
 
 
