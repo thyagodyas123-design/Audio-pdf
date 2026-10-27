@@ -17,8 +17,9 @@ _ready = False
 
 
 def default_url() -> str:
+    """AUDIOPDF_DB=sqlite força o SQLite em AUDIOPDF_DATA mesmo com DATABASE_URL definida (contingência se o Postgres estiver inacessível)."""
     url = os.environ.get("DATABASE_URL")
-    if url:
+    if url and os.environ.get("AUDIOPDF_DB", "").lower() != "sqlite":
         return url
     data = Path(os.environ.get("AUDIOPDF_DATA", "data")).resolve()
     data.mkdir(parents=True, exist_ok=True)

@@ -34,7 +34,7 @@ Todo o `/api` exige login (cookie de sessão HttpOnly, 30 dias). Cada livro pert
 - **Primeiro admin:** defina `ADMIN_EMAIL` e `ADMIN_PASSWORD` antes do primeiro start. Só valem quando não há nenhum usuário; os livros que já existiam passam a ser dele.
 - **Contas:** só administradores criam, editam, desativam e excluem usuários (tela **Usuários**, ou `/api/users`). O sistema não deixa excluir ou rebaixar o último admin ativo. Excluir uma conta entrega os livros dela a quem excluiu.
 - **Senhas:** argon2; trocar a senha ou desativar a conta derruba as sessões abertas; 5 tentativas erradas bloqueiam o login por 15 minutos (por e-mail e IP).
-- **Banco:** Postgres em produção (`DATABASE_URL`, já definido no `docker-compose.yml`); sem a variável, SQLite em `AUDIOPDF_DATA/audiopdf.db`. As migrations (Alembic, em `src/audiopdf/db/migrations`) rodam sozinhas ao iniciar. Áudios, vídeos e metadados dos capítulos continuam como arquivos no volume `/data`; o banco guarda usuários, sessões e o dono de cada livro.
+- **Banco:** Postgres em produção (`DATABASE_URL`, já definido no `docker-compose.yml`); sem a variável, SQLite em `AUDIOPDF_DATA/audiopdf.db`. `AUDIOPDF_DB=sqlite` força o SQLite mesmo com `DATABASE_URL` (contingência se o Postgres estiver inacessível; os usuários não migram sozinhos de um banco para o outro). As migrations (Alembic, em `src/audiopdf/db/migrations`) rodam sozinhas ao iniciar. Áudios, vídeos e metadados dos capítulos continuam como arquivos no volume `/data`; o banco guarda usuários, sessões e o dono de cada livro.
 
 ## Instalação
 

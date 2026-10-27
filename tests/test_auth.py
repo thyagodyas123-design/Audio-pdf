@@ -173,3 +173,12 @@ def test_503_explica_senha_do_postgres(web, monkeypatch):
     monkeypatch.setattr(auth, "_booted", False)
     r = new_client(web).get("/api/books")
     assert "senha do Postgres" in r.json()["detail"] and "segredo" not in r.text and "audiopdf" not in r.text
+
+
+def test_audiopdf_db_sqlite_ignora_database_url(monkeypatch):
+    from audiopdf import db
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://x:y@db:5432/z")
+    assert db.default_url().startswith("postgresql")
+    monkeypatch.setenv("AUDIOPDF_DB", "sqlite")
+    assert db.default_url().startswith("sqlite:///") and db.default_url().endswith("audiopdf.db")
