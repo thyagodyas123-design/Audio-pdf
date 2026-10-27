@@ -99,6 +99,20 @@ def admin_only(user: CurrentUser) -> dict:
     return user
 
 
+_HINTS = (  # trechos da mensagem do driver -> causa em português (sem expor host, usuário ou senha)
+    ("password authentication failed", "senha do Postgres não confere com a do volume (DATABASE_URL/POSTGRES_PASSWORD)"),
+    ("does not exist", "banco ou usuário inexistente no Postgres"),
+    ("could not translate host name", "host do banco não encontrado (serviço db fora do ar ou nome errado)"),
+    ("connection refused", "Postgres recusou a conexão (ainda iniciando ou porta errada)"),
+    ("timeout", "tempo esgotado ao conectar no Postgres"),
+)
+
+
+def _db_hint(e: Exception) -> str:
+    msg = str(getattr(e, "orig", None) or e).lower()
+    return next((h for k, h in _HINTS if k in msg), "")
+
+
 _booted = False
 _boot_lock = threading.Lock()
 
@@ -114,7 +128,8 @@ def ensure_ready() -> None:
             bootstrap(Path(os.environ.get("AUDIOPDF_DATA", "data")).resolve() / "books")
         except Exception as e:
             log.exception("falha ao preparar o banco de dados")  # o motivo real fica no log; a resposta não vaza a URL/credenciais
-            raise HTTPException(503, f"Banco de dados indisponível ({type(e).__name__}). Veja o log do servidor.") from e
+            hint = _db_hint(e)
+            raise HTTPException(503, f"Banco de dados indisponível ({type(e).__name__}{': ' + hint if hint else ''}). Veja o log do servidor.") from e
         _booted = True
 
 

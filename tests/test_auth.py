@@ -161,3 +161,15 @@ def test_banco_fora_do_ar_responde_503_claro(web, monkeypatch):
     monkeypatch.setattr(auth, "_booted", False)
     r = new_client(web).get("/api/books")
     assert r.status_code == 503 and "RuntimeError" in r.json()["detail"] and "segredo" not in r.text
+
+
+def test_503_explica_senha_do_postgres(web, monkeypatch):
+    from audiopdf import db
+    from audiopdf.web import auth
+
+    def boom():
+        raise RuntimeError('FATAL:  password authentication failed for user "audiopdf" host=db pw=segredo')
+    monkeypatch.setattr(db, "init", boom)
+    monkeypatch.setattr(auth, "_booted", False)
+    r = new_client(web).get("/api/books")
+    assert "senha do Postgres" in r.json()["detail"] and "segredo" not in r.text and "audiopdf" not in r.text
