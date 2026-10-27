@@ -112,7 +112,7 @@ def ensure_ready() -> None:
         try:
             db.init()
             bootstrap(Path(os.environ.get("AUDIOPDF_DATA", "data")).resolve() / "books")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("falha ao preparar o banco de dados")  # o motivo real fica no log; a resposta não vaza a URL/credenciais
             raise HTTPException(503, f"Banco de dados indisponível ({type(e).__name__}). Veja o log do servidor.") from e
         _booted = True
