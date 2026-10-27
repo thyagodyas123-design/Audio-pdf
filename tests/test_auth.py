@@ -149,3 +149,15 @@ def test_migration_sobe_e_desce(tmp_path):
     command.downgrade(cfg, "base")
     assert "users" not in inspect(eng).get_table_names()
     db.configure()  # volta ao banco dos testes
+
+
+def test_banco_fora_do_ar_responde_503_claro(web, monkeypatch):
+    from audiopdf import db
+    from audiopdf.web import auth
+
+    def boom():
+        raise RuntimeError("senha=segredo")
+    monkeypatch.setattr(db, "init", boom)
+    monkeypatch.setattr(auth, "_booted", False)
+    r = new_client(web).get("/api/books")
+    assert r.status_code == 503 and "RuntimeError" in r.json()["detail"] and "segredo" not in r.text

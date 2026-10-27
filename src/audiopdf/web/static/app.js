@@ -55,7 +55,7 @@ function h(tag, props = {}, ...kids) {
 async function api(url, opts) {
   const r = await fetch(url, opts);
   if (!r.ok) {
-    let d = r.statusText;
+    let d = r.statusText || `Erro ${r.status}`;
     try { d = (await r.json()).detail || d; } catch { /* corpo não JSON */ }
     const err = new Error(typeof d === 'string' ? d : 'Erro inesperado');
     err.status = r.status;

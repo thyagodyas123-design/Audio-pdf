@@ -13,6 +13,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    have = set(sa.inspect(op.get_bind()).get_table_names())  # tolera tabelas já criadas à mão
+    if {"users", "sessions", "books"} <= have:
+        return
     op.create_table(
         "users",
         sa.Column("id", sa.String(32), primary_key=True),
