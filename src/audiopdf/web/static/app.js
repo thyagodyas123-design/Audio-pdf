@@ -25,6 +25,13 @@ const ICONS = {
   more: '<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>',
   alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.1"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/>',
+  video: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10.5l5-3v9l-5-3z"/>',
+  book: '<path d="M12 6.5C10.5 5 8 4.5 4.5 4.5v13c3.5 0 6 .5 7.5 2 1.5-1.5 4-2 7.5-2v-13c-3.5 0-6 .5-7.5 2zM12 6.5v13"/>',
+  chevl: '<path d="M14.5 6l-6 6 6 6"/>',
+  chevr: '<path d="M9.5 6l6 6-6 6"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/>',
+  out: '<path d="M10 5H6a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h4M15 8l4 4-4 4M19 12H9"/>',
+  edit: '<path d="M5 19l1-4L16.5 4.5a1.8 1.8 0 0 1 2.5 2.5L8.5 17.5z"/>',
 };
 function ic(name, size = 20) {
   const s = document.createElement('span');
@@ -50,11 +57,14 @@ async function api(url, opts) {
   if (!r.ok) {
     let d = r.statusText;
     try { d = (await r.json()).detail || d; } catch { /* corpo não JSON */ }
-    throw new Error(typeof d === 'string' ? d : 'Erro inesperado');
+    const err = new Error(typeof d === 'string' ? d : 'Erro inesperado');
+    err.status = r.status;
+    throw err;
   }
   return r.json();
 }
-const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+const send = (method) => (url, body) => api(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+const post = send('POST'), patch = send('PATCH');
 
 const pad2 = (n) => String(n).padStart(2, '0');
 function fmtDur(s) {
@@ -105,8 +115,10 @@ const STATUS = {
   failed: ['Falhou', 'fail'], canceled: ['Cancelado', 'warn'], idle: ['Não convertido', 'idle'],
 };
 const chip = (s) => { const [t, k] = STATUS[s] || [s, 'idle']; return h('span', { class: `chip ${k}` }, t); };
+const playable = (c) => c.status === 'done' || (c.status === 'running' && c.parts > 0); // `parts` só vale enquanto converte
 const isBusy = (c) => c.status === 'running' || c.status === 'queued' || c.status === 'translating';
-const metaBusy = (m) => m.chapters.some(isBusy);
+const vBusy = (c) => Object.values(c.videos || {}).some((v) => v.status === 'queued' || v.status === 'running');
+const metaBusy = (m) => m.chapters.some((c) => isBusy(c) || vBusy(c));
 
 // ---------- player global ----------
 const P = {
@@ -136,7 +148,7 @@ const P = {
         if (t > 3 && t < this.a.duration - 5) this.a.currentTime = t;
         this.a.play().catch(() => {});
       }, { once: true });
-    } else if (c.parts > 0) {
+    } else if (playable(c)) {
       this.startPart(idx, 0);
     } else {
       toast('Esse capítulo ainda não tem áudio. Converta-o primeiro.');
@@ -167,7 +179,7 @@ const P = {
   skip(d) { if (Number.isFinite(this.a.duration)) this.a.currentTime = Math.min(this.a.duration, Math.max(0, this.a.currentTime + d)); },
   advance() {
     const next = this.chapter(this.idx + 1);
-    if (next && (next.status === 'done' || next.parts > 0)) this.start(next.index, 0);
+    if (next && playable(next)) this.start(next.index, 0);
     else if (next) { this.waiting = true; this.live = { idx: next.index, part: -1 }; this.paint(); }
     else { this.a.pause(); toast('Fim do livro.'); }
   },
@@ -185,7 +197,7 @@ const P = {
     if (!this.waiting || !this.live) return;
     const c = this.chapter(this.live.idx);
     if (!c) return;
-    if (this.live.part === -1) { if (c.status === 'done' || c.parts > 0) this.start(c.index, 0); return; }
+    if (this.live.part === -1) { if (playable(c)) this.start(c.index, 0); return; }
     if (c.parts > this.live.part + 1) this.startPart(this.live.idx, this.live.part + 1);
     else if (c.status === 'done') this.advance();
   },
@@ -223,6 +235,7 @@ const P = {
   },
   fit() { document.documentElement.style.setProperty('--player-h', this.bar.classList.contains('on') ? `${this.bar.offsetHeight}px` : '0px'); },
   close() {
+    if (R.isOpen) R.hide();
     this.a.pause(); this.a.removeAttribute('src'); this.meta = null; this.idx = null; this.live = null; this.waiting = false;
     this.setSleep(null); clearTimeout(this.pollT);
     this.bar.classList.remove('on'); this.fit();
@@ -267,6 +280,7 @@ const P = {
       s.value = v; s.style.background = `linear-gradient(to right, var(--accent) ${v / 10}%, var(--line) ${v / 10}%)`;
     }
     this.save();
+    if (R.isOpen && R.data) R.tick();
   },
   session() {
     if (!('mediaSession' in navigator) || !this.meta) return;
@@ -314,11 +328,134 @@ const P = {
   window.addEventListener('beforeunload', () => P.save(true));
 })();
 
+// ---------- leitor sincronizado: acompanha o PDF enquanto o áudio toca ----------
+const R = {
+  el: $('#reader'), isOpen: false, follow: true, tab: 'pdf', data: null, key: '', cur: -2, page: 1, loading: false,
+  pageBox: null, textBox: null, pageLabel: null,
+  toggle() { this.isOpen ? this.hide() : this.show(); },
+  show() {
+    if (!P.meta) { toast('Toque um capítulo primeiro.'); return; }
+    this.isOpen = true; this.el.hidden = false; $('#pl-reader').setAttribute('aria-pressed', 'true');
+    requestAnimationFrame(() => { this.el.classList.add('on'); document.body.classList.add('reader-open'); });
+    this.sync(true);
+  },
+  hide() {
+    this.isOpen = false; this.el.classList.remove('on'); document.body.classList.remove('reader-open');
+    $('#pl-reader').setAttribute('aria-pressed', 'false');
+    setTimeout(() => { if (!this.isOpen) this.el.hidden = true; }, 350);
+  },
+  chapterIdx() { return P.live && P.live.idx != null ? P.live.idx : P.idx; },
+  async sync(force = false) {
+    if (!this.isOpen || !P.meta) return;
+    const idx = this.chapterIdx();
+    if (!idx || idx < 1) return;
+    const key = `${P.meta.id}:${idx}`;
+    const stale = this.data && P.live && P.live.part >= this.data.timeline.length;
+    if (!force && key === this.key && !stale) return;
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      this.data = await api(`/api/books/${P.meta.id}/chapters/${idx}/sync`);
+      this.key = key; this.cur = -2;
+      this.render();
+      this.tick(true);
+    } catch (e) { toast(e.message, 'err'); } finally { this.loading = false; }
+  },
+  pIndex() {
+    const tl = this.data.timeline;
+    if (!tl.length || (P.live && P.live.part < 0)) return -2;
+    if (P.live) return tl[Math.min(P.live.part, tl.length - 1)].p;
+    const t = P.a.currentTime;
+    let lo = 0, hi = tl.length - 1, i = 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (tl[m].t <= t) { i = m; lo = m + 1; } else hi = m - 1; }
+    return tl[i].p;
+  },
+  tick(force = false) {
+    const p = this.pIndex();
+    if (p === this.cur && !force) return;
+    this.cur = p;
+    const para = this.data.paragraphs[Math.max(p, 0)];
+    const pg = para && para.rects[0] ? para.rects[0][0] : null;
+    if (this.follow && pg && pg !== this.page) this.showPage(pg); else this.paintHl();
+    for (const el of this.textBox ? this.textBox.children : []) el.classList.toggle('now', Number(el.dataset.i) === p);
+    if (this.follow && this.tab === 'text' && p >= 0) this.textBox.children[p]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  },
+  seekPara(i) {
+    const tl = this.data.timeline;
+    const k = tl.findIndex((e) => e.p === i);
+    if (k < 0) { toast('Esse trecho ainda não tem marcação de tempo.'); return; }
+    if (P.live) { if (k < (P.chapter(P.live.idx)?.parts ?? 0)) P.startPart(P.live.idx, k); else toast('Esse trecho ainda está sendo convertido.'); return; }
+    P.a.currentTime = tl[k].t + 0.01;
+    P.a.play().catch(() => {});
+  },
+  showPage(n) {
+    this.page = Math.max(1, Math.min(n, this.data.pages));
+    if (!this.pageBox) return;
+    const box = this.pageBox;
+    const img = h('img', { alt: `Página ${this.page} do PDF`, src: `/api/books/${P.meta.id}/pages/${this.page}?w=1000` });
+    img.addEventListener('load', () => box.style.setProperty('--ar', img.naturalWidth / img.naturalHeight));
+    box.replaceChildren(img);
+    this.data.paragraphs.forEach((para, i) => {
+      for (const [pg, x0, y0, x1, y1] of para.rects) {
+        if (pg !== this.page) continue;
+        box.append(h('div', { class: 'hit', title: 'Ouvir a partir daqui', style: `left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%`, onclick: () => this.seekPara(i) }));
+      }
+    });
+    if (this.pageLabel) this.pageLabel.textContent = `Página ${this.page} de ${this.data.pages}`;
+    this.paintHl();
+    if (this.page < this.data.pages) new Image().src = `/api/books/${P.meta.id}/pages/${this.page + 1}?w=1000`;
+  },
+  paintHl() {
+    if (!this.pageBox) return;
+    this.pageBox.querySelectorAll('.hl').forEach((e) => e.remove());
+    const para = this.cur >= 0 ? this.data.paragraphs[this.cur] : null;
+    for (const [pg, x0, y0, x1, y1] of para ? para.rects : []) {
+      if (pg === this.page) this.pageBox.append(h('div', { class: 'hl', style: `left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%` }));
+    }
+  },
+  render() {
+    const d = this.data, c = P.chapter(this.chapterIdx());
+    const tabBtn = (id, label) => h('button', { role: 'tab', 'aria-selected': String(this.tab === id), onclick: () => { this.tab = id; this.render(); this.tick(true); } }, label);
+    const follow = h('button', { class: 'btn sm', 'aria-pressed': String(this.follow), title: 'Virar a página e rolar o texto sozinho', onclick: () => { this.follow = !this.follow; this.render(); this.tick(true); } }, this.follow ? 'Seguindo a leitura' : 'Seguir a leitura');
+    const notes = [];
+    if (d.approx) notes.push(h('span', { class: 'chip warn' }, 'Sincronia aproximada (áudio anterior à marcação)'));
+    if (d.translated) notes.push(h('span', { class: 'chip idle' }, 'Texto traduzido; o PDF está no idioma original'));
+    if (!d.paragraphs.some((p) => p.rects.length)) notes.push(h('span', { class: 'chip warn' }, 'Não foi possível localizar o texto no PDF'));
+    this.pageBox = null; this.textBox = null; this.pageLabel = null;
+    const body = h('div', { class: 'rd-body' });
+    if (this.tab === 'pdf') {
+      this.pageBox = h('div', { class: 'pg' });
+      body.append(this.pageBox);
+    } else {
+      this.textBox = h('div', {}, d.paragraphs.map((p, i) => h('p', { class: 'rd-p', 'data-i': i, onclick: () => this.seekPara(i) }, p.text)));
+      body.append(this.textBox);
+    }
+    const nav = this.tab === 'pdf' ? (() => {
+      this.pageLabel = h('span', { class: 'num grow' }, `Página ${this.page} de ${d.pages}`);
+      return h('div', { class: 'rd-sub' },
+        h('button', { class: 'btn icon sm', 'aria-label': 'Página anterior', onclick: () => { this.follow = false; this.showPage(this.page - 1); this.render(); this.tick(true); } }, ic('chevl', 18)),
+        this.pageLabel,
+        h('button', { class: 'btn icon sm', 'aria-label': 'Próxima página', onclick: () => { this.follow = false; this.showPage(this.page + 1); this.render(); this.tick(true); } }, ic('chevr', 18)));
+    })() : null;
+    this.el.replaceChildren(
+      h('div', { class: 'rd-head' }, h('h2', {}, c ? `Cap. ${c.index} · ${c.title}` : 'Acompanhar leitura'),
+        h('div', { class: 'tabs', role: 'tablist' }, tabBtn('pdf', 'PDF'), tabBtn('text', 'Texto')), follow,
+        h('button', { class: 'btn icon sm ghost', 'aria-label': 'Fechar leitor', onclick: () => this.hide() }, ic('x', 18))),
+      ...(notes.length ? [h('div', { class: 'rd-sub' }, ...notes)] : []), ...(nav ? [nav] : []), body);
+    if (this.tab === 'pdf') this.showPage(this.page);
+  },
+};
+$('#pl-reader').replaceChildren(ic('book', 18), 'Acompanhar');
+$('#pl-reader').onclick = () => R.toggle();
+P.subs.add(() => R.sync());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && R.isOpen && !e.target.closest('dialog')) R.hide(); });
+
 // ---------- roteador ----------
 let cleanup = null;
 function setNav(w) {
-  for (const [id, k] of [['nav-lib', 'lib'], ['nav-new', 'new']]) {
+  for (const [id, k] of [['nav-lib', 'lib'], ['nav-new', 'new'], ['nav-users', 'users']]) {
     const el = $(`#${id}`);
+    if (!el) continue;
     if (k === w) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
   }
 }
@@ -533,6 +670,7 @@ async function viewConvert(id) {
 async function viewBook(id) {
   setNav('lib');
   let meta = await api(`/api/books/${id}`);
+  const caps = await api('/api/capabilities').catch(() => ({ llm: false }));
   document.title = `${meta.title} · Audio-PDF`;
   let q = '', timer = null, alive = true;
   P.setMeta(meta);
@@ -545,6 +683,7 @@ async function viewBook(id) {
   const playing = (c) => P.meta && P.meta.id === id && P.idx === c.index;
 
   function paintHead() {
+    if (head.querySelector('details[open]')) return;
     const done = meta.chapters.filter((c) => c.status === 'done');
     const dur = done.reduce((a, c) => a + (c.duration || 0), 0), busy = metaBusy(meta);
     const s = meta.settings;
@@ -567,7 +706,7 @@ async function viewBook(id) {
     tl.replaceChildren(...meta.chapters.map((c) => {
       const k = c.status === 'done' ? 'done' : isBusy(c) ? 'run' : c.status === 'failed' ? 'fail' : '';
       return h('button', { class: `${k} ${playing(c) ? 'cur' : ''}`, style: `flex-grow:${Math.max(c.chars, 1)}`, title: `${c.index}. ${c.title} · ${STATUS[c.status][0]}`,
-        'aria-label': `Capítulo ${c.index}: ${c.title}, ${STATUS[c.status][0]}`, onclick: () => (c.status === 'done' || c.parts > 0 ? P.open(id, c.index) : toast(`Capítulo ${c.index}: ${STATUS[c.status][0].toLowerCase()}.`)) });
+        'aria-label': `Capítulo ${c.index}: ${c.title}, ${STATUS[c.status][0]}`, onclick: () => (playable(c) ? P.open(id, c.index) : toast(`Capítulo ${c.index}: ${STATUS[c.status][0].toLowerCase()}.`)) });
     }));
     const n = (f) => meta.chapters.filter(f).length;
     legend.replaceChildren(
@@ -578,10 +717,11 @@ async function viewBook(id) {
       h('span', {}, 'A largura de cada trecho é proporcional ao tamanho do capítulo.'));
   }
   function paintList() {
+    if (list.querySelector('details[open]')) return; // não fecha o menu aberto a cada atualização
     const shown = meta.chapters.filter((c) => !q || `${c.index} ${c.title}`.toLowerCase().includes(q));
     if (!shown.length) { list.replaceChildren(h('div', { class: 'empty' }, 'Nenhum capítulo com esse filtro.')); return; }
     list.replaceChildren(...shown.map((c) => {
-      const now = playing(c), can = c.status === 'done' || c.parts > 0;
+      const now = playing(c), can = playable(c);
       const play = h('button', { class: 'btn icon sm ghost', 'aria-label': now && P.playing ? `Pausar capítulo ${c.index}` : `Ouvir capítulo ${c.index}`, disabled: !can,
         onclick: () => (now ? P.toggle() : P.open(id, c.index)) }, ic(now && P.playing ? 'pause' : 'play', 18));
       return h('div', { class: `brow ${now ? 'now' : ''}`, role: 'listitem' },
@@ -589,17 +729,68 @@ async function viewBook(id) {
         h('div', { class: 't' }, h('a', { href: '#', title: c.title, onclick: (e) => { e.preventDefault(); can ? (now ? P.toggle() : P.open(id, c.index)) : toast('Esse capítulo ainda não foi convertido.'); } }, c.title),
           c.status === 'running' || c.status === 'translating'
             ? h('div', { class: 'bar run', style: 'margin-top:6px', role: 'progressbar', 'aria-label': `Progresso do capítulo ${c.index}`, 'aria-valuenow': Math.round(c.progress * 100), 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('i', { style: `width:${c.progress * 100}%` })) : null,
-          c.error ? h('div', { class: 'err' }, c.error) : null),
+          c.error ? h('div', { class: 'err' }, c.error) : null,
+          ...videoLines(c)),
         h('span', { class: 'dur muted num', style: 'font-size:13px' }, c.duration ? fmtClock(c.duration) : ''),
         h('div', { class: 'acts' },
           c.status !== 'done' ? chip(c.status) : null,
           play,
           c.status === 'done' ? h('a', { class: 'btn icon sm ghost', href: `/api/books/${id}/audio/${c.index}?download=1`, download: '', 'aria-label': `Baixar capítulo ${c.index}` }, ic('download', 18)) : null,
+          c.status === 'done' ? videoMenu(c) : null,
           c.status === 'failed' || c.status === 'canceled'
             ? h('button', { class: 'btn icon sm ghost', 'aria-label': `Reprocessar capítulo ${c.index}`, onclick: () => retry(c) }, ic('refresh', 18)) : null));
     }));
   }
   const paintAll = () => { paintHead(); paintTimeline(); paintList(); };
+  const KIND = { leitura: 'vídeo da leitura', resumo: 'vídeo resumo', aula: 'vídeo-aula com IA', aula_simples: 'vídeo-aula econômica' };
+  const KIND_HINT = { leitura: 'O PDF acompanhado, com o trecho lido em destaque', resumo: 'Só os trechos principais do capítulo, narrados (seleção automática, sem reescrever)', aula: 'Aula educacional escrita por IA: tópicos, explicação, resumo e perguntas. Tem custo no provedor de LLM e envia o texto do capítulo a ele.', aula_simples: 'Mesmo formato da aula, sem IA e sem custo: usa as frases mais representativas e perguntas de completar. Não reescreve nem explica.' };
+  function videoLines(c) {
+    return Object.entries(c.videos || {}).filter(([, v]) => v.status === 'queued' || v.status === 'running').map(([k, v]) =>
+      h('div', { class: 'hint', style: 'margin-top:6px' }, `Gerando ${KIND[k]}… ${Math.round((v.progress || 0) * 100)}%`,
+        h('div', { class: 'bar run', style: 'margin-top:4px', role: 'progressbar', 'aria-label': `Progresso do ${KIND[k]}`, 'aria-valuenow': Math.round((v.progress || 0) * 100), 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('i', { style: `width:${(v.progress || 0) * 100}%` }))));
+  }
+  async function requestVideo(idx, kind) {
+    try { await post(`/api/books/${id}/chapters/${idx}/video`, { kind }); toast(`Gerando ${KIND[kind]}. Você acompanha o progresso na lista.`); refresh(); } catch (e) { toast(e.message, 'err'); }
+  }
+  async function removeVideo(idx, kind) {
+    if (!await confirmDialog({ title: 'Excluir o vídeo?', body: 'O arquivo será apagado. Dá para gerar de novo depois.', ok: 'Excluir', danger: true })) return;
+    try { await api(`/api/books/${id}/chapters/${idx}/video/${kind}`, { method: 'DELETE' }); refresh(); } catch (e) { toast(e.message, 'err'); }
+  }
+  function watchVideo(c, kind) {
+    P.a.pause();
+    const url = `/api/books/${id}/chapters/${c.index}/video/${kind}`;
+    const vid = h('video', { controls: true, autoplay: true, playsinline: true, src: url, style: 'width:100%;border-radius:8px;background:#000' });
+    const dlg = h('dialog', { style: 'width:min(960px,94vw)', 'aria-label': `Vídeo do capítulo ${c.index}` },
+      h('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:12px' }, h('h2', { style: 'flex:1;min-width:0' }, `Cap. ${c.index} · ${KIND[kind]}`),
+        h('a', { class: 'btn sm', href: `${url}?download=1`, download: '' }, ic('download', 16), 'Baixar'),
+        h('button', { class: 'btn icon sm ghost', 'aria-label': 'Fechar', onclick: () => dlg.close() }, ic('x', 18))), vid);
+    dlg.addEventListener('close', () => { vid.pause(); vid.removeAttribute('src'); dlg.remove(); });
+    document.body.append(dlg); dlg.showModal();
+  }
+  function videoMenu(c) {
+    const close = (e) => e.currentTarget.closest('details').removeAttribute('open');
+    const items = [];
+    for (const kind of ['leitura', 'resumo', 'aula_simples', 'aula']) {
+      const v = (c.videos || {})[kind];
+      if (v && (v.status === 'queued' || v.status === 'running')) {
+        items.push(h('div', { class: 'hint', style: 'padding:8px 12px' }, `Gerando ${KIND[kind]}… ${Math.round((v.progress || 0) * 100)}%`));
+      } else if (v && v.status === 'done') {
+        items.push(h('button', { onclick: (e) => { close(e); watchVideo(c, kind); } }, ic('play', 18), `Assistir ${KIND[kind]}`),
+          h('a', { href: `/api/books/${id}/chapters/${c.index}/video/${kind}?download=1`, download: '' }, ic('download', 18), `Baixar ${KIND[kind]}`),
+          h('button', { class: 'danger', onclick: (e) => { close(e); removeVideo(c.index, kind); } }, ic('trash', 18), `Excluir ${KIND[kind]}`));
+      } else if (kind === 'aula' && !caps.llm) {
+        items.push(h('div', { class: 'hint', style: 'padding:8px 12px' }, 'Vídeo-aula indisponível: configure OPENCODE_API_KEY (ou LLM_API_KEY) no .env e reinicie o servidor.'));
+        continue;
+      } else {
+        if (v && v.error) items.push(h('div', { class: 'err hint', style: 'padding:8px 12px;color:var(--err)' }, v.error));
+        items.push(h('button', { title: KIND_HINT[kind], onclick: (e) => { close(e); requestVideo(c.index, kind); } }, ic('video', 18), `${v ? 'Tentar de novo: ' : 'Gerar '}${KIND[kind]}`));
+      }
+      const est = kind === 'aula' ? ` Estimativa: ~${Math.max(1, Math.round(Math.min(c.chars, caps.budget_chars || 20000) / 3500))} mil tokens de entrada.` : '';
+      items.push(h('div', { class: 'hint', style: 'padding:0 12px 6px' }, KIND_HINT[kind] + est));
+    }
+    return h('details', { class: 'menu' }, h('summary', { class: 'btn icon sm ghost', 'aria-label': `Vídeos do capítulo ${c.index}`, title: 'Vídeos do capítulo' }, ic('video', 18)),
+      h('div', { class: 'pop', style: 'min-width:280px' }, ...items));
+  }
   async function retry(c) {
     const s = meta.settings || { voice: 'pf_dora', speed: 1, lang: 'pt-BR' };
     try { await post(`/api/books/${id}/jobs`, { chapters: [c.index], voice: c.voice || s.voice, speed: c.speed || s.speed, target_language: c.lang || s.lang, translator: s.translator }); refresh(); } catch (e) { toast(e.message, 'err'); }
@@ -631,16 +822,135 @@ async function viewBook(id) {
   if (metaBusy(meta)) timer = setTimeout(refresh, 2000);
 }
 
+// ---------- sessão e usuários ----------
+const session = { user: null };
+function renderUserbar() {
+  const u = session.user;
+  document.body.classList.toggle('anon', !u);
+  $('#userbar').replaceChildren(...(u ? [
+    h('span', { class: 'muted who' }, u.name),
+    u.role === 'admin' ? h('a', { class: 'btn ghost sm', href: '#/users', id: 'nav-users' }, ic('user', 18), 'Usuários') : null,
+    h('button', { class: 'btn ghost sm', onclick: changePasswordDialog }, 'Senha'),
+    h('button', { class: 'btn ghost sm', onclick: logout }, ic('out', 18), 'Sair'),
+  ] : []));
+}
+async function logout() {
+  try { await post('/api/auth/logout'); } catch { /* sessão já expirada */ }
+  location.hash = '#/'; location.reload();
+}
+function formDialog({ title, fields, ok = 'Salvar', onSubmit }) {
+  return new Promise((resolve) => {
+    const err = h('div', { class: 'notice err', role: 'alert', hidden: true });
+    const els = {};
+    const rows = fields.map((f) => {
+      const id = `f-${f.key}`;
+      if (f.type === 'checkbox') {
+        els[f.key] = h('input', { type: 'checkbox', id, checked: !!f.value });
+        return h('label', { class: 'check' }, els[f.key], f.label);
+      }
+      els[f.key] = f.type === 'select'
+        ? h('select', { id }, f.options.map(([v, l]) => h('option', { value: v, selected: v === f.value }, l)))
+        : h('input', { type: f.type || 'text', id, value: f.value ?? '', autocomplete: f.autocomplete || 'off', required: f.required, minlength: f.minlength });
+      return h('label', { class: 'field', for: id }, f.label, els[f.key], f.hint ? h('span', { class: 'hint' }, f.hint) : null);
+    });
+    const submit = h('button', { class: 'btn primary', type: 'submit' }, ok);
+    const dlg = h('dialog', { 'aria-label': title },
+      h('form', { class: 'stack', onsubmit: async (e) => {
+        e.preventDefault();
+        const vals = Object.fromEntries(fields.map((f) => [f.key, f.type === 'checkbox' ? els[f.key].checked : els[f.key].value]));
+        submit.disabled = true; err.hidden = true;
+        try { await onSubmit(vals); dlg.close('yes'); } catch (x) { err.hidden = false; err.replaceChildren(ic('alert', 18), x.message); submit.disabled = false; }
+      } }, h('h2', {}, title), err, ...rows,
+      h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => dlg.close('no') }, 'Cancelar'), submit)));
+    dlg.addEventListener('close', () => { resolve(dlg.returnValue === 'yes'); dlg.remove(); });
+    document.body.append(dlg); dlg.showModal();
+  });
+}
+const changePasswordDialog = () => formDialog({
+  title: 'Trocar a minha senha', ok: 'Trocar',
+  fields: [
+    { key: 'current', label: 'Senha atual', type: 'password', required: true, autocomplete: 'current-password' },
+    { key: 'new', label: 'Nova senha', type: 'password', required: true, minlength: 8, autocomplete: 'new-password', hint: 'De 8 a 128 caracteres. Os outros dispositivos serão desconectados.' },
+  ],
+  onSubmit: async (v) => { await post('/api/auth/password', v); toast('Senha alterada.'); },
+});
+function viewLogin() {
+  document.title = 'Entrar · Audio-PDF';
+  const err = h('div', { class: 'notice err', role: 'alert', hidden: true });
+  const email = h('input', { type: 'email', id: 'lg-email', required: true, autocomplete: 'username' });
+  const pass = h('input', { type: 'password', id: 'lg-pass', required: true, autocomplete: 'current-password' });
+  const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Entrar');
+  $app.replaceChildren(h('form', { class: 'card login', onsubmit: async (e) => {
+    e.preventDefault(); btn.disabled = true; err.hidden = true;
+    try {
+      session.user = await post('/api/auth/login', { email: email.value, password: pass.value });
+      renderUserbar(); route();
+    } catch (x) { err.hidden = false; err.replaceChildren(ic('alert', 18), x.message); btn.disabled = false; pass.select(); }
+  } }, h('div', {}, h('h1', {}, 'Entrar'), h('p', { class: 'sub' }, 'Use a conta criada pelo administrador.')), err,
+  h('label', { class: 'field', for: 'lg-email' }, 'E-mail', email), h('label', { class: 'field', for: 'lg-pass' }, 'Senha', pass), btn));
+  email.focus();
+}
+const fmtWhen = (t) => (t ? new Date(t * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'nunca');
+async function viewUsers() {
+  if (session.user.role !== 'admin') { location.hash = '#/'; return; }
+  setNav('users'); document.title = 'Usuários · Audio-PDF';
+  const body = h('tbody');
+  const load = async () => {
+    const users = await api('/api/users');
+    body.replaceChildren(...users.map((u) => h('tr', {},
+      h('td', {}, h('strong', {}, u.name), h('div', { class: 'hint' }, u.email)),
+      h('td', {}, h('span', { class: `chip ${u.role === 'admin' ? '' : 'idle'}` }, u.role === 'admin' ? 'Administrador' : 'Usuário')),
+      h('td', {}, h('span', { class: `chip ${u.active ? '' : 'fail'}` }, u.active ? 'Ativo' : 'Desativado')),
+      h('td', { class: 'num' }, u.books),
+      h('td', { class: 'muted' }, fmtWhen(u.last_login)),
+      h('td', { class: 'acts' },
+        h('button', { class: 'btn icon sm ghost', 'aria-label': `Editar ${u.name}`, title: 'Editar', onclick: () => editUser(u) }, ic('edit', 18)),
+        h('button', { class: 'btn icon sm ghost', 'aria-label': `Excluir ${u.name}`, title: 'Excluir', onclick: () => removeUser(u) }, ic('trash', 18))))));
+  };
+  const editUser = async (u) => {
+    const roles = [['user', 'Usuário'], ['admin', 'Administrador']];
+    const done = await formDialog({
+      title: u ? 'Editar usuário' : 'Novo usuário', ok: u ? 'Salvar' : 'Criar',
+      fields: [
+        { key: 'name', label: 'Nome', value: u?.name, required: true },
+        { key: 'email', label: 'E-mail', type: 'email', value: u?.email, required: true },
+        { key: 'role', label: 'Perfil', type: 'select', options: roles, value: u?.role || 'user' },
+        ...(u ? [{ key: 'active', label: 'Conta ativa', type: 'checkbox', value: u.active }] : []),
+        { key: 'password', label: u ? 'Nova senha' : 'Senha', type: 'password', required: !u, minlength: 8, autocomplete: 'new-password', hint: u ? 'Deixe em branco para manter a atual. Trocar a senha desconecta o usuário.' : 'De 8 a 128 caracteres.' },
+      ],
+      onSubmit: async (v) => {
+        if (u) { await patch(`/api/users/${u.id}`, { ...v, password: v.password || undefined }); } else { await post('/api/users', v); }
+      },
+    });
+    if (done) { toast(u ? 'Usuário atualizado.' : 'Usuário criado.'); load().catch((e) => toast(e.message, 'err')); }
+  };
+  const removeUser = async (u) => {
+    if (!await confirmDialog({ title: `Excluir ${u.name}?`, body: u.books ? `Os ${u.books} livros dessa conta passam para você.` : 'A conta será removida.', ok: 'Excluir', danger: true })) return;
+    try { await api(`/api/users/${u.id}`, { method: 'DELETE' }); toast('Usuário excluído.'); await load(); } catch (e) { toast(e.message, 'err'); }
+  };
+  $app.replaceChildren(heading('Usuários', 'Só administradores criam e gerenciam contas.', h('button', { class: 'btn primary', onclick: () => editUser(null) }, ic('plus', 18), 'Novo usuário')),
+    h('div', { class: 'card tablewrap' }, h('table', { class: 'utable' },
+      h('thead', {}, h('tr', {}, ['Pessoa', 'Perfil', 'Situação', 'Livros', 'Último acesso', ''].map((t) => h('th', { scope: 'col' }, t)))), body)));
+  await load();
+}
+
 // ---------- rota ----------
 async function route() {
   if (cleanup) { cleanup(); cleanup = null; }
   const [, view, arg] = location.hash.split('/');
+  if (!session.user) {
+    try { session.user = await api('/api/auth/me'); } catch { session.user = null; }
+    renderUserbar();
+    if (!session.user) { viewLogin(); return; }
+  }
   try {
-    if (view === 'new') await viewNew();
+    if (view === 'users') await viewUsers();
+    else if (view === 'new') await viewNew();
     else if (view === 'book' && arg) await viewBook(arg);
     else if (view === 'convert' && arg) await viewConvert(arg);
     else await viewLibrary();
   } catch (e) {
+    if (e.status === 401) { session.user = null; renderUserbar(); viewLogin(); return; }
     $app.replaceChildren(h('div', { class: 'notice err', role: 'alert' }, ic('alert', 18), `Erro: ${e.message}`), h('a', { class: 'btn', href: '#/' }, 'Voltar à biblioteca'));
   }
   window.scrollTo({ top: 0 });

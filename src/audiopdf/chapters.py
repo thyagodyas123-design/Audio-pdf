@@ -17,6 +17,8 @@ class Chapter:
     index: int
     title: str
     text: str
+    page_start: int = 0  # 0-indexed, inclusivo
+    page_end: int = 0  # exclusivo
 
 
 def _boundaries(outline: list[Outline]) -> list[Outline]:
@@ -37,7 +39,7 @@ def split_chapters(
 ) -> list[Chapter]:
     bounds = sorted(_boundaries(outline), key=lambda o: o.page)
     if not bounds:
-        return [Chapter(1, title, merge_broken_paragraphs("\n\n".join(p for p in pages if p)))]
+        return [Chapter(1, title, merge_broken_paragraphs("\n\n".join(p for p in pages if p)), 0, len(pages))]
     chapters: list[Chapter] = []
     for i, o in enumerate(bounds):
         end = bounds[i + 1].page if i + 1 < len(bounds) else len(pages)
@@ -47,5 +49,5 @@ def split_chapters(
             continue
         text = merge_broken_paragraphs("\n\n".join(p for p in pages[o.page:end] if p))
         if text.strip():
-            chapters.append(Chapter(len(chapters) + 1, o.title.strip(), text))
+            chapters.append(Chapter(len(chapters) + 1, o.title.strip(), text, o.page, end))
     return chapters
