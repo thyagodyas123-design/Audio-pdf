@@ -807,4 +807,8 @@ def main() -> None:
     from dotenv import load_dotenv
 
     load_dotenv()
-    uvicorn.run("audiopdf.web.app:app", host="127.0.0.1", port=int(os.environ.get("PORT", "8000")))
+    uvicorn.run(
+        "audiopdf.web.app:app",
+        host=os.environ.get("HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "8000")),
+    )
