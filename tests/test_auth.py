@@ -189,3 +189,16 @@ def test_health_publico_sem_credenciais(web):
     j = r.json()
     assert r.status_code == 200 and j["db"] == "sqlite" and j["db_ok"] is True and j["admin_configurado"] is True
     assert "senha-do-admin" not in r.text and "sqlite:///" not in r.text
+
+
+def test_health_responde_mesmo_com_banco_fora(web, monkeypatch):
+    from audiopdf import db
+    from audiopdf.web import auth
+
+    def boom(*a, **k):
+        raise RuntimeError('FATAL:  password authentication failed for user "audiopdf"')
+    monkeypatch.setattr(db, "session", boom)
+    monkeypatch.setattr(auth, "_booted", False)
+    r = new_client(web).get("/api/health")
+    j = r.json()
+    assert r.status_code == 200 and j["db_ok"] is False and "senha do Postgres" in j["dica"] and "audiopdf" not in r.text

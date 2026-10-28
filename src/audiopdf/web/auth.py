@@ -135,6 +135,8 @@ def ensure_ready() -> None:
 
 def guard(request: Request) -> None:
     """Dependência global: tudo em /api exige login; rotas com {book_id} exigem ser dono (admin vê todos)."""
+    if request.url.path == "/api/health":
+        return  # diagnóstico: precisa responder mesmo com o banco fora do ar
     ensure_ready()
     if request.url.path in PUBLIC_PATHS:
         return
