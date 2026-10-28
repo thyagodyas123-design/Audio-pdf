@@ -182,3 +182,10 @@ def test_audiopdf_db_sqlite_ignora_database_url(monkeypatch):
     assert db.default_url().startswith("postgresql")
     monkeypatch.setenv("AUDIOPDF_DB", "sqlite")
     assert db.default_url().startswith("sqlite:///") and db.default_url().endswith("audiopdf.db")
+
+
+def test_health_publico_sem_credenciais(web):
+    r = new_client(web).get("/api/health")
+    j = r.json()
+    assert r.status_code == 200 and j["db"] == "sqlite" and j["db_ok"] is True and j["admin_configurado"] is True
+    assert "senha-do-admin" not in r.text and "sqlite:///" not in r.text
