@@ -22,7 +22,7 @@ from ..db.models import Book, User, UserSession
 log = logging.getLogger("audiopdf.auth")
 COOKIE = "audiopdf_session"
 SESSION_TTL = 30 * 24 * 3600
-PUBLIC_PATHS = {"/api/auth/login"}
+PUBLIC_PATHS = {"/api/auth/login", "/api/health"}
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_FAILS, FAIL_WINDOW = 5, 15 * 60
 
@@ -194,6 +194,21 @@ def bootstrap(books_dir: Path) -> None:
 # --- rotas ----------------------------------------------------------------------------------------
 
 router = APIRouter()
+
+
+@router.get("/api/health")
+def health():
+    """Público: qual banco o app usa e se ele conecta (sem credenciais). Serve para diagnosticar deploy e variáveis."""
+    kind = db.default_url().split(":", 1)[0].split("+", 1)[0]  # "sqlite" | "postgresql"; só o esquema, nunca a URL
+    out = {"app": "ok", "db": kind, "db_forcado_sqlite": os.environ.get("AUDIOPDF_DB", "").lower() == "sqlite",
+           "admin_configurado": bool(os.environ.get("ADMIN_EMAIL") and os.environ.get("ADMIN_PASSWORD"))}
+    try:
+        with db.session() as s:
+            out["usuarios"] = s.scalar(select(func.count()).select_from(User))
+        out["db_ok"] = True
+    except Exception as e:  # noqa: BLE001
+        out.update(db_ok=False, erro=type(e).__name__, dica=_db_hint(e) or None)
+    return out
 
 
 class LoginIn(BaseModel):
